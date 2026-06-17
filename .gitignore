@@ -1,0 +1,18 @@
+# Local shared state and private trip data
+data.json
+
+# Reference/mockup images
+ChatGPT Image*.png
+*.jpg
+*.jpeg
+*.webp
+
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

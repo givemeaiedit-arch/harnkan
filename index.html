@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="th">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>หารกัน - เว็บหารค่าใช้จ่าย</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="เมนูหลัก">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+          <strong>หารกัน</strong>
+        </div>
+
+        <nav class="side-nav" data-nav>
+          <button class="nav-item is-active" data-view="overview">
+            <i data-lucide="home"></i><span>ภาพรวมทริป</span>
+          </button>
+          <button class="nav-item" data-view="expenses">
+            <i data-lucide="receipt-text"></i><span>รายการค่าใช้จ่าย</span>
+          </button>
+          <button class="nav-item" data-view="members">
+            <i data-lucide="users-round"></i><span>จัดการสมาชิก</span>
+          </button>
+          <button class="nav-item" data-view="rules">
+            <i data-lucide="clock-3"></i><span>เงื่อนไขการหาร</span>
+          </button>
+          <button class="nav-item" data-view="history">
+            <i data-lucide="archive"></i><span>บันทึกย้อนหลัง</span>
+          </button>
+          <button class="nav-item" data-view="settlements">
+            <i data-lucide="arrow-left-right"></i><span>ใครจ่ายให้ใคร</span>
+          </button>
+        </nav>
+
+        <div class="share-box">
+          <div class="coin-stack" aria-hidden="true"></div>
+          <b>แชร์ลิงก์เข้าทริปนี้</b>
+          <span>ชวนเพื่อนมาเช็กยอดด้วยกัน</span>
+          <button class="secondary-button" id="copySummaryBtn" type="button">คัดลอกสรุป</button>
+        </div>
+      </aside>
+
+      <div class="main-panel">
+        <header class="topbar">
+          <button class="icon-button menu-button" data-view-shortcut="overview" type="button" aria-label="กลับภาพรวม">
+            <i data-lucide="menu"></i>
+          </button>
+          <div class="topbar-actions">
+            <button class="link-button" type="button"><i data-lucide="circle-help"></i>ช่วยเหลือ</button>
+            <button class="icon-button" type="button" aria-label="แจ้งเตือน"><i data-lucide="bell"></i></button>
+            <div class="mini-profile">
+              <span class="small-avatar avatar-initial" aria-label="น๊อต">น</span>
+              <span>น๊อต</span>
+              <i data-lucide="chevron-down"></i>
+            </div>
+          </div>
+        </header>
+
+        <main class="content">
+          <section class="hero-card">
+            <div class="trip-photo" aria-hidden="true"></div>
+            <div class="trip-title">
+              <div>
+                <h1 id="tripNameLabel">ทริประยอง 15-16 พ.ค.</h1>
+                <p id="tripSubtitleLabel">15-16 พฤษภาคม 2568 (2 วัน 1 คืน)</p>
+                <select class="trip-select" id="tripSelect" aria-label="เลือกทริป"></select>
+              </div>
+              <button class="icon-button edit-trip" id="editTripBtn" type="button" aria-label="แก้ไขชื่อทริป"><i data-lucide="pencil"></i></button>
+            </div>
+            <div class="hero-actions">
+              <button class="primary-outline" id="addTripBtn" type="button"><i data-lucide="plus"></i>เพิ่มทริป</button>
+              <button class="secondary-button" id="closeTripBtn" type="button"><i data-lucide="archive"></i>ปิดทริป</button>
+              <button class="icon-button" type="button" aria-label="เมนูเพิ่มเติม"><i data-lucide="ellipsis"></i></button>
+            </div>
+          </section>
+
+          <section class="trip-tools panel">
+            <form id="tripCreateForm" class="trip-tool-form">
+              <div>
+                <b>สร้างทริปใหม่</b>
+                <span>ข้อมูลสมาชิกและค่าใช้จ่ายจะแยกตามทริป</span>
+              </div>
+              <input id="newTripNameInput" type="text" placeholder="เช่น มื้อเย็นวันศุกร์" autocomplete="off" />
+              <input id="newTripSubtitleInput" type="text" placeholder="รายละเอียดสั้น ๆ เช่น 17 มิ.ย. 2569" autocomplete="off" />
+              <button class="primary-button" type="submit"><i data-lucide="plus"></i>เพิ่มทริป</button>
+            </form>
+            <form id="tripEditForm" class="trip-tool-form">
+              <div>
+                <b>แก้ไขทริปปัจจุบัน</b>
+                <span>แก้ชื่อที่แสดงบนหัวหน้าเว็บ</span>
+              </div>
+              <input id="editTripNameInput" type="text" placeholder="ชื่อทริป" />
+              <input id="editTripSubtitleInput" type="text" placeholder="รายละเอียดทริป" />
+              <button class="secondary-button" type="submit"><i data-lucide="save"></i>บันทึกชื่อทริป</button>
+            </form>
+          </section>
+
+          <section class="view is-visible" id="view-overview" aria-label="ภาพรวม">
+            <div class="stats-grid" id="statsGrid"></div>
+
+            <div class="quick-actions">
+              <button class="action-tile" data-view-shortcut="expenses" type="button"><i data-lucide="plus"></i><span>เพิ่มว่าใครจ่ายอะไร</span></button>
+              <button class="action-tile" data-view-shortcut="members" type="button"><i data-lucide="user-round-cog"></i><span>จัดการสมาชิก</span></button>
+              <button class="action-tile" data-view-shortcut="settlements" type="button"><i data-lucide="clipboard-list"></i><span>สรุปยอด</span></button>
+            </div>
+
+            <div class="dashboard-grid">
+              <article class="panel latest-panel">
+                <div class="panel-title">
+                  <span class="soft-icon food"><i data-lucide="utensils"></i></span>
+                  <h2>รายการค่าใช้จ่ายล่าสุด</h2>
+                  <button class="text-action" data-view-shortcut="expenses" type="button">ดูทั้งหมด <i data-lucide="chevron-right"></i></button>
+                </div>
+                <div class="expense-list compact" id="latestExpenses"></div>
+              </article>
+
+              <article class="panel members-panel">
+                <div class="panel-title">
+                  <span class="soft-icon mint"><i data-lucide="users-round"></i></span>
+                  <h2>สมาชิก (<span id="memberCountLabel">0</span> คน)</h2>
+                  <button class="text-action" data-view-shortcut="members" type="button">ดูทั้งหมด <i data-lucide="chevron-right"></i></button>
+                </div>
+                <div class="member-strip" id="memberStrip"></div>
+              </article>
+
+              <article class="panel settlement-panel">
+                <div class="panel-title">
+                  <span class="soft-icon orange"><i data-lucide="coins"></i></span>
+                  <h2>ใครต้องโอนให้ใคร</h2>
+                  <span class="danger-text" id="unsettledLabel"></span>
+                </div>
+                <div class="settlement-list" id="overviewSettlements"></div>
+                <button class="wide-outline" data-view-shortcut="settlements" type="button">ดูรายละเอียดการชำระเงินทั้งหมด <i data-lucide="chevron-right"></i></button>
+              </article>
+            </div>
+          </section>
+
+          <section class="view" id="view-members" aria-label="จัดการสมาชิก">
+            <div class="two-column">
+              <article class="panel form-panel">
+                <div class="panel-title">
+                  <span class="soft-icon mint"><i data-lucide="user-round-plus"></i></span>
+                  <h2>เพิ่มเพื่อนในวงหาร</h2>
+                </div>
+                <form id="memberForm" class="inline-form">
+                  <label>
+                    <span>ชื่อเพื่อน</span>
+                    <input id="memberNameInput" type="text" placeholder="เช่น แป้ง" autocomplete="off" />
+                  </label>
+                  <button class="primary-button" type="submit"><i data-lucide="plus"></i>เพิ่มคน</button>
+                </form>
+              </article>
+
+              <article class="panel">
+                <div class="panel-title">
+                  <span class="soft-icon blue"><i data-lucide="list-checks"></i></span>
+                  <h2>เลือกคนที่อยู่ในทริป/มื้อนี้</h2>
+                </div>
+                <div class="member-manager" id="memberManager"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="view" id="view-expenses" aria-label="รายการค่าใช้จ่าย">
+            <div class="expense-layout">
+              <article class="panel form-panel expense-form-panel">
+                <div class="panel-title">
+                  <span class="soft-icon blue"><i data-lucide="receipt-text"></i></span>
+                  <h2 id="expenseFormTitle">เพิ่มว่าใครจ่ายอะไร</h2>
+                </div>
+                <form id="expenseForm" class="expense-form">
+                  <input id="expenseIdInput" type="hidden" />
+                  <div class="form-grid">
+                    <label>
+                      <span>ชื่อรายการ</span>
+                      <input id="expenseTitleInput" type="text" placeholder="เช่น ค่าอาหารเย็น" required />
+                    </label>
+                    <label>
+                      <span>จำนวนเงิน (บาท)</span>
+                      <input id="expenseAmountInput" type="number" min="0" step="0.01" placeholder="0.00" required />
+                    </label>
+                    <label>
+                      <span>คนจ่ายก่อน</span>
+                      <select id="expensePayerSelect"></select>
+                    </label>
+                    <label>
+                      <span>หมวด</span>
+                      <select id="expenseCategorySelect">
+                        <option value="food">อาหาร</option>
+                        <option value="beer">เครื่องดื่ม</option>
+                        <option value="stay">ที่พัก</option>
+                        <option value="fuel">น้ำมัน</option>
+                        <option value="other">อื่น ๆ</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div class="split-mode">
+                    <span>วิธีหาร</span>
+                    <div class="segmented" id="splitModeGroup">
+                      <button class="is-selected" type="button" data-mode="equal">หารเท่ากัน</button>
+                      <button type="button" data-mode="time">ตามเวลา</button>
+                      <button type="button" data-mode="custom">เฉพาะบางส่วน</button>
+                    </div>
+                  </div>
+
+                  <div class="participant-editor">
+                    <div class="section-head">
+                      <b>รายการนี้หารกับใครบ้าง</b>
+                      <button class="text-action" id="selectActiveMembersBtn" type="button">เลือกคนในทริปทั้งหมด</button>
+                    </div>
+                    <div class="participant-grid" id="participantGrid"></div>
+                  </div>
+
+                  <div class="conditional-editor">
+                    <div class="section-head">
+                      <div>
+                        <b>แยกยอด/เงื่อนไขรายคน</b>
+                        <span>แตกจากจำนวนเงินหลักของคนจ่ายก่อน ยอดย่อยรวมต้องเท่ากับยอดหลัก และเลือกได้ว่าแต่ละยอดหารใคร/ไม่หารใคร</span>
+                      </div>
+                      <button class="text-action" id="addConditionItemBtn" type="button"><i data-lucide="plus"></i>เพิ่มยอดย่อย</button>
+                    </div>
+                    <div class="condition-list" id="conditionItemsList"></div>
+                  </div>
+
+                  <label>
+                    <span>หมายเหตุ / ยกเว้น</span>
+                    <textarea id="expenseNoteInput" rows="3" placeholder="เช่น โอชิไม่กินเบียร์, แป้งมาแค่ช่วงหลัง"></textarea>
+                  </label>
+
+                  <div class="form-actions">
+                    <button class="secondary-button" id="resetExpenseBtn" type="button">ล้างฟอร์ม</button>
+                    <button class="primary-button" type="submit"><i data-lucide="save"></i>บันทึกรายการ</button>
+                  </div>
+                </form>
+              </article>
+
+              <article class="panel">
+                <div class="panel-title">
+                  <span class="soft-icon orange"><i data-lucide="wallet-cards"></i></span>
+                  <h2>รายการทั้งหมด</h2>
+                </div>
+                <div class="expense-list" id="allExpenses"></div>
+              </article>
+            </div>
+          </section>
+
+          <section class="view" id="view-rules" aria-label="เงื่อนไขการหาร">
+            <article class="panel rules-panel">
+              <div class="panel-title">
+                <span class="soft-icon purple"><i data-lucide="clock-3"></i></span>
+                <h2>ตัวอย่างหารตามเวลา</h2>
+              </div>
+              <div class="time-example">
+                <div>
+                  <b>กรณีร้านอาหาร 18:00-24:00</b>
+                  <p>6 คนอยู่เต็มเวลา 6 ชั่วโมง และ 2 คนมาเพิ่มช่วง 22:00-24:00 ระบบคิดตามน้ำหนักชั่วโมงของแต่ละคน</p>
+                </div>
+                <div class="formula-box" id="timeExampleBox"></div>
+              </div>
+              <div class="rules-help">
+                <div><i data-lucide="check-circle-2"></i><span>ใช้โหมด “ตามเวลา” ในฟอร์มรายการ แล้วใส่ชั่วโมงของแต่ละคน</span></div>
+                <div><i data-lucide="check-circle-2"></i><span>คนที่ไม่หารให้ปิดสวิตช์ในช่องรายชื่อของรายการนั้น</span></div>
+                <div><i data-lucide="check-circle-2"></i><span>โหมด “เฉพาะบางส่วน” ใช้กับคนที่จ่ายเฉพาะยอดกำหนด เช่น ไม่กินเบียร์ หรือมาแค่บางช่วง</span></div>
+              </div>
+            </article>
+          </section>
+
+          <section class="view" id="view-history" aria-label="บันทึกย้อนหลัง">
+            <article class="panel">
+              <div class="panel-title">
+                <span class="soft-icon blue"><i data-lucide="archive"></i></span>
+                <h2>บันทึกย้อนหลัง</h2>
+              </div>
+              <div class="history-list" id="historyList"></div>
+            </article>
+          </section>
+
+          <section class="view" id="view-settlements" aria-label="สรุปยอดโอน">
+            <div class="settlement-layout">
+              <article class="panel">
+                <div class="panel-title">
+                  <span class="soft-icon blue"><i data-lucide="calculator"></i></span>
+                  <h2>สรุปแต่ละคน</h2>
+                </div>
+                <div class="balance-table" id="balanceTable"></div>
+              </article>
+
+              <article class="panel">
+                <div class="panel-title">
+                  <span class="soft-icon orange"><i data-lucide="arrow-left-right"></i></span>
+                  <h2>ยอดที่ต้องโอน</h2>
+                </div>
+                <div class="settlement-list detailed" id="settlementList"></div>
+                <button class="primary-button full-width" id="shareLineBtn" type="button"><i data-lucide="message-circle"></i>คัดลอกข้อความแชร์เข้ากลุ่มไลน์</button>
+                <button class="secondary-button full-width" id="shareAllSettlementsBtn" type="button"><i data-lucide="share-2"></i>แชร์ทั้งหมด</button>
+              </article>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <nav class="bottom-nav" data-nav aria-label="เมนูมือถือ">
+      <button class="bottom-item is-active" data-view="overview"><i data-lucide="home"></i><span>ภาพรวม</span></button>
+      <button class="bottom-item" data-view="expenses"><i data-lucide="receipt-text"></i><span>ค่าใช้จ่าย</span></button>
+      <button class="bottom-item" data-view="members"><i data-lucide="users-round"></i><span>สมาชิก</span></button>
+      <button class="bottom-item" data-view="settlements"><i data-lucide="arrow-left-right"></i><span>โอน</span></button>
+      <button class="bottom-item" data-view="rules"><i data-lucide="settings"></i><span>เงื่อนไข</span></button>
+      <button class="bottom-item" data-view="history"><i data-lucide="archive"></i><span>ย้อนหลัง</span></button>
+    </nav>
+
+    <div class="detail-modal" id="settlementDetailModal" aria-hidden="true">
+      <div class="detail-modal-backdrop" data-close-settlement-modal></div>
+      <section class="detail-modal-card" role="dialog" aria-modal="true" aria-labelledby="settlementDetailTitle">
+        <div class="detail-modal-head">
+          <div>
+            <span>แชร์รายละเอียด</span>
+            <h2 id="settlementDetailTitle">รายละเอียดการโอน</h2>
+          </div>
+          <button class="icon-button" type="button" data-close-settlement-modal aria-label="ปิดรายละเอียด"><i data-lucide="x"></i></button>
+        </div>
+        <div class="detail-modal-body" id="settlementDetailBody"></div>
+      </section>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="app.js"></script>
+  </body>
+</html>
