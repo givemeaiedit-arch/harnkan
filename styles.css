@@ -1669,6 +1669,11 @@ body.has-modal {
   white-space: nowrap;
 }
 
+.detail-action-row {
+  display: grid;
+  gap: 8px;
+}
+
 .slip-upload {
   padding: 12px;
   border: 1px dashed #93c5fd;

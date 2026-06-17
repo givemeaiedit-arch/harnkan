@@ -9,6 +9,27 @@ function canUseSharedStateApi() {
   return location.protocol.startsWith("http") && !location.hostname.endsWith("github.io");
 }
 
+let sharedLinkError = false;
+
+function encodeSharePayload(payload) {
+  return btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function decodeSharePayload(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return JSON.parse(decodeURIComponent(escape(atob(padded))));
+}
+
+function sharedHashValue() {
+  const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  if (!hash) return "";
+  return new URLSearchParams(hash).get("share") || "";
+}
+
 const defaultMembers = [
   { id: "som", name: "ส้ม", abbr: "S", active: true, color: "#ef7d9a" },
   { id: "not", name: "น๊อต", abbr: "N", active: true, color: "#2563eb" },
@@ -114,9 +135,12 @@ let currentTripId = defaultTrip.id;
 let members = trips[0].members;
 let expenses = trips[0].expenses;
 const savedState = loadState();
-if (savedState) {
-  trips = savedState.trips;
-  currentTripId = savedState.currentTripId;
+const sharedState = loadSharedStateFromUrl();
+const sharedStateLoaded = Boolean(sharedState);
+if (sharedState || savedState) {
+  const initialState = sharedState || savedState;
+  trips = initialState.trips;
+  currentTripId = initialState.currentTripId;
   syncCurrentTripRefs();
 }
 
@@ -193,6 +217,17 @@ function loadState() {
   }
 }
 
+function loadSharedStateFromUrl() {
+  const value = sharedHashValue();
+  if (!value) return null;
+  try {
+    const normalized = normalizeState(decodeSharePayload(value));
+    if (normalized) return normalized;
+  } catch {}
+  sharedLinkError = true;
+  return null;
+}
+
 function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(statePayload()));
@@ -206,7 +241,7 @@ function saveState() {
 }
 
 async function hydrateSharedState() {
-  if (!canUseSharedStateApi()) return;
+  if (sharedStateLoaded || !canUseSharedStateApi()) return;
   try {
     const response = await fetch(API_STATE_URL, { cache: "no-store" });
     if (!response.ok) return;
@@ -1156,6 +1191,43 @@ function allBalanceRows() {
   }).join("");
 }
 
+function shareableTripSnapshot() {
+  const trip = clone(currentTrip());
+  const confirmed = trip.confirmedTransfers || {};
+  trip.confirmedTransfers = Object.fromEntries(Object.entries(confirmed).map(([key, info]) => [
+    key,
+    {
+      confirmedAt: info.confirmedAt || "",
+      slipName: info.slipName || "",
+      slipType: info.slipType || "",
+    },
+  ]));
+  return trip;
+}
+
+function buildSettlementShareLink() {
+  const trip = shareableTripSnapshot();
+  const payload = {
+    trips: [trip],
+    currentTripId: trip.id,
+    sharedAt: new Date().toISOString(),
+  };
+  const url = new URL(location.href);
+  url.search = "";
+  url.hash = `share=${encodeSharePayload(payload)}`;
+  return url.toString();
+}
+
+async function copySettlementShareLink() {
+  const link = buildSettlementShareLink();
+  if (await copyText(link)) {
+    showToast("\u0e04\u0e31\u0e14\u0e25\u0e2d\u0e01\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e41\u0e25\u0e49\u0e27");
+  } else {
+    showToast("\u0e04\u0e31\u0e14\u0e25\u0e2d\u0e01\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e2d\u0e31\u0e15\u0e42\u0e19\u0e21\u0e31\u0e15\u0e34\u0e44\u0e21\u0e48\u0e44\u0e14\u0e49 \u0e25\u0e34\u0e07\u0e01\u0e4c\u0e16\u0e39\u0e01\u0e41\u0e2a\u0e14\u0e07\u0e44\u0e27\u0e49\u0e43\u0e2b\u0e49\u0e40\u0e25\u0e37\u0e2d\u0e01\u0e04\u0e31\u0e14\u0e25\u0e2d\u0e01");
+    showCopyFallback(link);
+  }
+}
+
 function showAllSettlementsDetail() {
   const settlements = calculateSettlements();
   if (!settlements.length) {
@@ -1175,6 +1247,9 @@ function showAllSettlementsDetail() {
     <div class="transfer-total-box">
       <span>รวมยอดที่เลือก</span>
       <strong id="selectedTransferTotal">0.00 บาท</strong>
+    </div>
+    <div class="detail-action-row">
+      <button class="secondary-button full-width" type="button" data-copy-share-link>${iconMarkup("copy")}\u0e04\u0e31\u0e14\u0e25\u0e2d\u0e01\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c</button>
     </div>
     <label class="slip-upload">
       <span>แนบสลิป</span>
@@ -1574,6 +1649,7 @@ function bindEvents() {
     const confirmTransfersButton = event.target.closest("#confirmTransfersBtn");
     const viewSlipButton = event.target.closest("[data-view-slip]");
     const cancelTransferButton = event.target.closest("[data-cancel-transfer]");
+    const copyShareLinkButton = event.target.closest("[data-copy-share-link]");
 
     if (event.target.closest("#addTripBtn")) {
       $("#newTripNameInput").focus();
@@ -1596,6 +1672,7 @@ function bindEvents() {
     if (confirmTransfersButton && confirmTransfersButton.disabled) showToast("กรุณาแนบสลิปก่อนยืนยันการโอน");
     if (viewSlipButton) showSlipDetail(viewSlipButton.dataset.viewSlip);
     if (cancelTransferButton) cancelTransfer(cancelTransferButton.dataset.cancelTransfer);
+    if (copyShareLinkButton) copySettlementShareLink();
     if (removeConditionButton) {
       const id = removeConditionButton.dataset.removeConditionItem;
       renderConditionItems(collectConditionItemsFromForm().filter((item) => item.id !== id));
@@ -1828,4 +1905,11 @@ function bindEvents() {
 bindEvents();
 resetExpenseForm();
 renderAll();
+if (sharedStateLoaded) {
+  setView("settlements");
+  showAllSettlementsDetail();
+  showToast("\u0e40\u0e1b\u0e34\u0e14\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e08\u0e32\u0e01\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e41\u0e25\u0e49\u0e27");
+} else if (sharedLinkError) {
+  showToast("\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e44\u0e21\u0e48\u0e2a\u0e21\u0e1a\u0e39\u0e23\u0e13\u0e4c");
+}
 hydrateSharedState();
