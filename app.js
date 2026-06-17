@@ -75,13 +75,21 @@ function compactSharePayload(payload) {
   const trip = payload?.trips?.[0];
   if (!trip) return payload;
   return {
-    v: 2,
-    t: compactTrip(trip),
+    v: 3,
+    t: compactTripV3(trip),
     a: payload.sharedAt || "",
   };
 }
 
 function expandSharePayload(payload) {
+  if (payload?.v === 3) {
+    const trip = expandTripV3(payload.t);
+    return {
+      trips: [trip],
+      currentTripId: trip.id,
+      sharedAt: payload.a || "",
+    };
+  }
   if (payload?.v !== 2) return payload;
   const trip = expandTrip(payload.t);
   return {
@@ -249,6 +257,155 @@ function expandTrip(row = []) {
     expenses: expandExpenses(row[5]),
     confirmedTransfers: expandConfirmedTransfers(row[6]),
   };
+}
+
+function compactTripV3(trip) {
+  const memberIds = (trip.members || []).map((member) => member.id);
+  const memberIndex = new Map(memberIds.map((id, index) => [id, index]));
+  return [
+    trip.name,
+    trip.subtitle,
+    trip.closedAt || "",
+    compactMembersV3(trip.members),
+    compactExpensesV3(trip.expenses, memberIndex),
+    compactConfirmedTransfersV3(trip.confirmedTransfers, memberIndex),
+  ];
+}
+
+function expandTripV3(row = []) {
+  const members = expandMembersV3(row[3]);
+  const memberIds = members.map((member) => member.id);
+  return {
+    id: "shared-trip",
+    name: row[0],
+    subtitle: row[1],
+    closedAt: row[2] || "",
+    members,
+    expenses: expandExpensesV3(row[4], memberIds),
+    confirmedTransfers: expandConfirmedTransfersV3(row[5], memberIds),
+  };
+}
+
+function compactMembersV3(list = []) {
+  return list.map((member) => trimDefaults([
+    member.name,
+    member.abbr,
+    member.active === false ? 0 : 1,
+    compactPayment(member.payment),
+  ], ["", "", 1, []]));
+}
+
+function expandMembersV3(list = []) {
+  return list.map((row, index) => ({
+    id: `m${index}`,
+    name: row[0],
+    abbr: row[1] || makeMemberAbbr(row[0]),
+    active: row[2] !== 0,
+    color: defaultMembers[index % defaultMembers.length]?.color || pickColor(row[0]),
+    payment: expandPayment(row[3]),
+  }));
+}
+
+function compactMemberIndex(memberId, memberIndex) {
+  return memberIndex.has(memberId) ? memberIndex.get(memberId) : memberId;
+}
+
+function expandMemberId(value, memberIds) {
+  return typeof value === "number" ? memberIds[value] : value;
+}
+
+function compactParticipantsV3(participants = {}, memberIndex) {
+  return Object.entries(participants).map(([memberId, config = {}]) => trimDefaults([
+    compactMemberIndex(memberId, memberIndex),
+    config.included === false ? 0 : 1,
+    Number(config.weight) || 1,
+    Number(config.fixed) || 0,
+  ], ["", 1, 1, 0]));
+}
+
+function expandParticipantsV3(list = [], memberIds) {
+  return Object.fromEntries(list.map((row) => [
+    expandMemberId(row[0], memberIds),
+    {
+      included: row[1] === undefined ? true : row[1] !== 0,
+      weight: row[2] === undefined ? 1 : Number(row[2]) || 0,
+      fixed: row[3] === undefined ? 0 : Number(row[3]) || 0,
+    },
+  ]).filter(([memberId]) => memberId));
+}
+
+function compactSubItemsV3(list = [], memberIndex) {
+  return list.map((item) => [
+    item.title,
+    Number(item.amount) || 0,
+    (item.participantIds || []).map((id) => compactMemberIndex(id, memberIndex)),
+  ]);
+}
+
+function expandSubItemsV3(list = [], memberIds) {
+  return list.map((row, index) => ({
+    id: `s${index}`,
+    title: row[0],
+    amount: Number(row[1]) || 0,
+    participantIds: (row[2] || []).map((id) => expandMemberId(id, memberIds)).filter(Boolean),
+  }));
+}
+
+function compactExpensesV3(list = [], memberIndex) {
+  return list.map((expense, index) => trimDefaults([
+    expense.title,
+    Number(expense.amount) || 0,
+    compactMemberIndex(expense.payerId, memberIndex),
+    expense.category,
+    expense.mode,
+    expense.note || "",
+    compactParticipantsV3(expense.participants, memberIndex),
+    compactSubItemsV3(expense.subItems, memberIndex),
+  ], ["", 0, "", "", "equal", "", [], []]));
+}
+
+function expandExpensesV3(list = [], memberIds) {
+  return list.map((row, index) => ({
+    id: `e${index}`,
+    title: row[0],
+    amount: Number(row[1]) || 0,
+    payerId: expandMemberId(row[2], memberIds),
+    category: row[3],
+    mode: row[4] || "equal",
+    note: row[5] || "",
+    participants: expandParticipantsV3(row[6], memberIds),
+    subItems: expandSubItemsV3(row[7], memberIds),
+  }));
+}
+
+function compactConfirmedTransfersV3(transfers = {}, memberIndex) {
+  return Object.entries(transfers).map(([key, info = {}]) => {
+    const [fromId, toId, cents] = key.split("|");
+    return trimDefaults([
+      compactMemberIndex(fromId, memberIndex),
+      compactMemberIndex(toId, memberIndex),
+      Number(cents) || 0,
+      info.confirmedAt || "",
+      info.slipName || "",
+      info.slipType || "",
+    ], ["", "", 0, "", "", ""]);
+  });
+}
+
+function expandConfirmedTransfersV3(list = [], memberIds) {
+  return Object.fromEntries(list.map((row) => {
+    const fromId = expandMemberId(row[0], memberIds);
+    const toId = expandMemberId(row[1], memberIds);
+    const cents = Number(row[2]) || 0;
+    return [
+      `${fromId}|${toId}|${cents}`,
+      {
+        confirmedAt: row[3] || "",
+        slipName: row[4] || "",
+        slipType: row[5] || "",
+      },
+    ];
+  }).filter(([key]) => !key.startsWith("undefined|") && !key.includes("|undefined|")));
 }
 
 const defaultMembers = [
