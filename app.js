@@ -5,6 +5,10 @@ const CANCEL_TRANSFER_CONFIRM = "\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19\u0e17\u0e3
 let remoteSaveEnabled = false;
 let saveTimer;
 
+function canUseSharedStateApi() {
+  return location.protocol.startsWith("http") && !location.hostname.endsWith("github.io");
+}
+
 const defaultMembers = [
   { id: "som", name: "ส้ม", abbr: "S", active: true, color: "#ef7d9a" },
   { id: "not", name: "น๊อต", abbr: "N", active: true, color: "#2563eb" },
@@ -202,7 +206,7 @@ function saveState() {
 }
 
 async function hydrateSharedState() {
-  if (!location.protocol.startsWith("http")) return;
+  if (!canUseSharedStateApi()) return;
   try {
     const response = await fetch(API_STATE_URL, { cache: "no-store" });
     if (!response.ok) return;
@@ -220,7 +224,7 @@ async function hydrateSharedState() {
 }
 
 async function syncStateToServer() {
-  if (!location.protocol.startsWith("http")) return;
+  if (!canUseSharedStateApi()) return;
   try {
     const response = await fetch(API_STATE_URL, {
       method: "POST",
