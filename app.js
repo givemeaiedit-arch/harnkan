@@ -12,7 +12,7 @@ function canUseSharedStateApi() {
 let sharedLinkError = false;
 
 function encodeSharePayload(payload) {
-  return btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+  return btoa(unescape(encodeURIComponent(JSON.stringify(compactSharePayload(payload)))))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/g, "");
@@ -21,13 +21,234 @@ function encodeSharePayload(payload) {
 function decodeSharePayload(value) {
   const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-  return JSON.parse(decodeURIComponent(escape(atob(padded))));
+  const payload = JSON.parse(deURIComponentCompat(atob(padded)));
+  return expandSharePayload(payload);
 }
 
 function sharedHashValue() {
   const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
   if (!hash) return "";
-  return new URLSearchParams(hash).get("share") || "";
+  const params = new URLSearchParams(hash);
+  return params.get("s") || params.get("share") || "";
+}
+
+function compressedSharedHashValue() {
+  const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  if (!hash) return "";
+  return new URLSearchParams(hash).get("z") || "";
+}
+
+function deURIComponentCompat(value) {
+  return decodeURIComponent(escape(value));
+}
+
+function bytesToBase64Url(bytes) {
+  let binary = "";
+  bytes.forEach((byte) => {
+    binary += String.fromCharCode(byte);
+  });
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function base64UrlToBytes(value) {
+  const normalized = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+  return Uint8Array.from(atob(padded), (char) => char.charCodeAt(0));
+}
+
+async function encodeCompressedSharePayload(payload) {
+  if (!("CompressionStream" in window)) return "";
+  const json = JSON.stringify(compactSharePayload(payload));
+  const stream = new Blob([new TextEncoder().encode(json)]).stream().pipeThrough(new CompressionStream("gzip"));
+  const buffer = await new Response(stream).arrayBuffer();
+  return bytesToBase64Url(new Uint8Array(buffer));
+}
+
+async function decodeCompressedSharePayload(value) {
+  if (!("DecompressionStream" in window)) throw new Error("DecompressionStream unavailable");
+  const stream = new Blob([base64UrlToBytes(value)]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const text = await new Response(stream).text();
+  return expandSharePayload(JSON.parse(text));
+}
+
+function compactSharePayload(payload) {
+  const trip = payload?.trips?.[0];
+  if (!trip) return payload;
+  return {
+    v: 2,
+    t: compactTrip(trip),
+    a: payload.sharedAt || "",
+  };
+}
+
+function expandSharePayload(payload) {
+  if (payload?.v !== 2) return payload;
+  const trip = expandTrip(payload.t);
+  return {
+    trips: [trip],
+    currentTripId: trip.id,
+    sharedAt: payload.a || "",
+  };
+}
+
+function trimDefaults(row, defaults) {
+  while (row.length > 1 && isShareDefaultValue(row[row.length - 1], defaults[row.length - 1])) row.pop();
+  return row;
+}
+
+function isShareDefaultValue(value, defaultValue) {
+  if (Array.isArray(value) && Array.isArray(defaultValue)) return value.length === 0 && defaultValue.length === 0;
+  return value === defaultValue;
+}
+
+function compactPayment(payment = {}) {
+  const clean = sanitizePayment(payment);
+  if (!clean.account) return [];
+  const bankIndex = thaiBanks.indexOf(clean.bank);
+  return [
+    clean.type === "bank" ? "b" : "p",
+    clean.type === "bank" ? (bankIndex >= 0 ? bankIndex : clean.bank) : "",
+    clean.account,
+  ];
+}
+
+function expandPayment(row = []) {
+  if (!row.length) return sanitizePayment();
+  const type = row[0] === "b" ? "bank" : "promptpay";
+  const bank = type === "bank" ? (typeof row[1] === "number" ? thaiBanks[row[1]] : row[1]) : thaiBanks[0];
+  return sanitizePayment({ type, bank, account: row[2] || "" });
+}
+
+function compactMembers(list = []) {
+  return list.map((member) => trimDefaults([
+    member.id,
+    member.name,
+    member.abbr,
+    member.active === false ? 0 : 1,
+    member.color,
+    compactPayment(member.payment),
+  ], ["", "", "", 1, "", []]));
+}
+
+function expandMembers(list = []) {
+  return list.map((row) => ({
+    id: row[0],
+    name: row[1],
+    abbr: row[2],
+    active: row[3] !== 0,
+    color: row[4],
+    payment: expandPayment(row[5]),
+  }));
+}
+
+function compactParticipants(participants = {}) {
+  return Object.entries(participants).map(([memberId, config = {}]) => trimDefaults([
+    memberId,
+    config.included === false ? 0 : 1,
+    Number(config.weight) || 1,
+    Number(config.fixed) || 0,
+  ], ["", 1, 1, 0]));
+}
+
+function expandParticipants(list = []) {
+  return Object.fromEntries(list.map((row) => [
+    row[0],
+    {
+      included: row[1] === undefined ? true : row[1] !== 0,
+      weight: row[2] === undefined ? 1 : Number(row[2]) || 0,
+      fixed: row[3] === undefined ? 0 : Number(row[3]) || 0,
+    },
+  ]));
+}
+
+function compactSubItems(list = []) {
+  return list.map((item) => [
+    item.id,
+    item.title,
+    Number(item.amount) || 0,
+    item.participantIds || [],
+  ]);
+}
+
+function expandSubItems(list = []) {
+  return list.map((row) => ({
+    id: row[0],
+    title: row[1],
+    amount: Number(row[2]) || 0,
+    participantIds: row[3] || [],
+  }));
+}
+
+function compactConfirmedTransfers(transfers = {}) {
+  return Object.entries(transfers).map(([key, info = {}]) => trimDefaults([
+    key,
+    info.confirmedAt || "",
+    info.slipName || "",
+    info.slipType || "",
+  ], ["", "", "", ""]));
+}
+
+function expandConfirmedTransfers(list = []) {
+  return Object.fromEntries(list.map((row) => [
+    row[0],
+    {
+      confirmedAt: row[1] || "",
+      slipName: row[2] || "",
+      slipType: row[3] || "",
+    },
+  ]));
+}
+
+function compactExpenses(list = []) {
+  return list.map((expense) => trimDefaults([
+    expense.id,
+    expense.title,
+    Number(expense.amount) || 0,
+    expense.payerId,
+    expense.category,
+    expense.mode,
+    expense.note || "",
+    compactParticipants(expense.participants),
+    compactSubItems(expense.subItems),
+  ], ["", "", 0, "", "", "equal", "", [], []]));
+}
+
+function expandExpenses(list = []) {
+  return list.map((row) => ({
+    id: row[0],
+    title: row[1],
+    amount: Number(row[2]) || 0,
+    payerId: row[3],
+    category: row[4],
+    mode: row[5] || "equal",
+    note: row[6] || "",
+    participants: expandParticipants(row[7]),
+    subItems: expandSubItems(row[8]),
+  }));
+}
+
+function compactTrip(trip) {
+  return [
+    trip.id,
+    trip.name,
+    trip.subtitle,
+    trip.closedAt || "",
+    compactMembers(trip.members),
+    compactExpenses(trip.expenses),
+    compactConfirmedTransfers(trip.confirmedTransfers),
+  ];
+}
+
+function expandTrip(row = []) {
+  return {
+    id: row[0],
+    name: row[1],
+    subtitle: row[2],
+    closedAt: row[3] || "",
+    members: expandMembers(row[4]),
+    expenses: expandExpenses(row[5]),
+    confirmedTransfers: expandConfirmedTransfers(row[6]),
+  };
 }
 
 const defaultMembers = [
@@ -136,7 +357,7 @@ let members = trips[0].members;
 let expenses = trips[0].expenses;
 const savedState = loadState();
 const sharedState = loadSharedStateFromUrl();
-const sharedStateLoaded = Boolean(sharedState);
+let sharedStateLoaded = Boolean(sharedState);
 if (sharedState || savedState) {
   const initialState = sharedState || savedState;
   trips = initialState.trips;
@@ -226,6 +447,28 @@ function loadSharedStateFromUrl() {
   } catch {}
   sharedLinkError = true;
   return null;
+}
+
+async function loadCompressedSharedStateFromUrl() {
+  const value = compressedSharedHashValue();
+  if (!value) return false;
+  try {
+    const normalized = normalizeState(await decodeCompressedSharePayload(value));
+    if (!normalized) throw new Error("Invalid shared state");
+    trips = normalized.trips;
+    currentTripId = normalized.currentTripId;
+    syncCurrentTripRefs();
+    sharedStateLoaded = true;
+    renderAll();
+    setView("settlements");
+    showAllSettlementsDetail();
+    showToast("\u0e40\u0e1b\u0e34\u0e14\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e08\u0e32\u0e01\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e41\u0e25\u0e49\u0e27");
+    return true;
+  } catch {
+    sharedLinkError = true;
+    showToast("\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e44\u0e21\u0e48\u0e2a\u0e21\u0e1a\u0e39\u0e23\u0e13\u0e4c");
+    return false;
+  }
 }
 
 function saveState() {
@@ -1205,7 +1448,7 @@ function shareableTripSnapshot() {
   return trip;
 }
 
-function buildSettlementShareLink() {
+async function buildSettlementShareLink() {
   const trip = shareableTripSnapshot();
   const payload = {
     trips: [trip],
@@ -1214,12 +1457,17 @@ function buildSettlementShareLink() {
   };
   const url = new URL(location.href);
   url.search = "";
-  url.hash = `share=${encodeSharePayload(payload)}`;
+  try {
+    const compressed = await encodeCompressedSharePayload(payload);
+    url.hash = compressed ? `z=${compressed}` : `s=${encodeSharePayload(payload)}`;
+  } catch {
+    url.hash = `s=${encodeSharePayload(payload)}`;
+  }
   return url.toString();
 }
 
 async function copySettlementShareLink() {
-  const link = buildSettlementShareLink();
+  const link = await buildSettlementShareLink();
   if (await copyText(link)) {
     showToast("\u0e04\u0e31\u0e14\u0e25\u0e2d\u0e01\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e41\u0e25\u0e49\u0e27");
   } else {
@@ -1909,7 +2157,12 @@ if (sharedStateLoaded) {
   setView("settlements");
   showAllSettlementsDetail();
   showToast("\u0e40\u0e1b\u0e34\u0e14\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25\u0e08\u0e32\u0e01\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e41\u0e25\u0e49\u0e27");
+} else if (compressedSharedHashValue()) {
+  loadCompressedSharedStateFromUrl().then((loaded) => {
+    if (!loaded && !sharedLinkError) hydrateSharedState();
+  });
 } else if (sharedLinkError) {
   showToast("\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e44\u0e21\u0e48\u0e2a\u0e21\u0e1a\u0e39\u0e23\u0e13\u0e4c");
+} else {
+  hydrateSharedState();
 }
-hydrateSharedState();
