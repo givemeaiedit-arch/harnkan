@@ -10,6 +10,8 @@ function canUseSharedStateApi() {
 }
 
 let sharedLinkError = false;
+const SHARE_CATEGORIES = ["food", "beer", "stay", "fuel", "other"];
+const SHARE_MODES = ["equal", "custom", "time"];
 
 function encodeSharePayload(payload) {
   return btoa(unescape(encodeURIComponent(JSON.stringify(compactSharePayload(payload)))))
@@ -74,14 +76,17 @@ async function decodeCompressedSharePayload(value) {
 function compactSharePayload(payload) {
   const trip = payload?.trips?.[0];
   if (!trip) return payload;
-  return {
-    v: 3,
-    t: compactTripV3(trip),
-    a: payload.sharedAt || "",
-  };
+  return [4, compactTripV4(trip)];
 }
 
 function expandSharePayload(payload) {
+  if (Array.isArray(payload) && payload[0] === 4) {
+    const trip = expandTripV4(payload[1]);
+    return {
+      trips: [trip],
+      currentTripId: trip.id,
+    };
+  }
   if (payload?.v === 3) {
     const trip = expandTripV3(payload.t);
     return {
@@ -406,6 +411,78 @@ function expandConfirmedTransfersV3(list = [], memberIds) {
       },
     ];
   }).filter(([key]) => !key.startsWith("undefined|") && !key.includes("|undefined|")));
+}
+
+function compactCategory(category) {
+  const index = SHARE_CATEGORIES.indexOf(category);
+  return index >= 0 ? index : category;
+}
+
+function expandCategory(value) {
+  return typeof value === "number" ? SHARE_CATEGORIES[value] : value;
+}
+
+function compactMode(mode) {
+  const index = SHARE_MODES.indexOf(mode);
+  return index >= 0 ? index : mode;
+}
+
+function expandMode(value) {
+  return typeof value === "number" ? SHARE_MODES[value] : value;
+}
+
+function compactTripV4(trip) {
+  const memberIds = (trip.members || []).map((member) => member.id);
+  const memberIndex = new Map(memberIds.map((id, index) => [id, index]));
+  return trimDefaults([
+    trip.name,
+    trip.subtitle,
+    compactMembersV3(trip.members),
+    compactExpensesV4(trip.expenses, memberIndex),
+    compactConfirmedTransfersV3(trip.confirmedTransfers, memberIndex),
+    trip.closedAt || "",
+  ], ["", "", [], [], [], ""]);
+}
+
+function expandTripV4(row = []) {
+  const members = expandMembersV3(row[2]);
+  const memberIds = members.map((member) => member.id);
+  return {
+    id: "shared-trip",
+    name: row[0],
+    subtitle: row[1],
+    closedAt: row[5] || "",
+    members,
+    expenses: expandExpensesV4(row[3], memberIds),
+    confirmedTransfers: expandConfirmedTransfersV3(row[4], memberIds),
+  };
+}
+
+function compactExpensesV4(list = [], memberIndex) {
+  return list.map((expense) => trimDefaults([
+    expense.title,
+    Number(expense.amount) || 0,
+    compactMemberIndex(expense.payerId, memberIndex),
+    compactCategory(expense.category),
+    compactMode(expense.mode),
+    expense.note || "",
+    compactParticipantsV3(expense.participants, memberIndex),
+    compactSubItemsV3(expense.subItems, memberIndex),
+  ], ["", 0, "", 4, 0, "", [], []]));
+}
+
+function expandExpensesV4(list = [], memberIds) {
+  return list.map((row, index) => ({
+    id: `e${index}`,
+    title: row[0],
+    amount: Number(row[1]) || 0,
+    payerId: expandMemberId(row[2], memberIds),
+    category: expandCategory(row[3]),
+    mode: expandMode(row[4]) || "equal",
+    note: row[5] || "",
+    participants: expandParticipantsV3(row[6], memberIds),
+    subItems: expandSubItemsV3(row[7], memberIds),
+  }));
 }
 
 const defaultMembers = [
