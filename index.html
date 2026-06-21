@@ -367,7 +367,34 @@
                   <button class="primary-button" id="testLineWebhookBtn" type="button"><i data-lucide="send"></i>ทดสอบ endpoint</button>
                   <button class="secondary-button" id="copyLineCurlBtn" type="button"><i data-lucide="copy"></i>คัดลอก curl ทดสอบ</button>
                 </div>
+                <div class="line-ai-panel">
+                  <div class="line-ai-card">
+                    <span>Model AI</span>
+                    <div class="line-model-row">
+                      <select id="lineAiModelSelect" aria-label="เลือก Model AI">
+                        <option value="gpt-5.4-mini">GPT 5.4 mini</option>
+                        <option value="gpt-4.1-mini">GPT 4o1 mini</option>
+                      </select>
+                      <button class="secondary-button" id="saveLineAiModelBtn" type="button"><i data-lucide="save"></i>บันทึก</button>
+                    </div>
+                    <small id="lineAiModelHelp">-</small>
+                  </div>
+                  <div class="line-ai-card">
+                    <span>ค่าใช้จ่าย AI รวม</span>
+                    <strong id="lineAiTotalCostLabel">$0.000000 / ฿0.0000</strong>
+                    <small id="lineAiUsageLabel">0 calls • 0 tokens</small>
+                  </div>
+                </div>
                 <div class="line-result" id="lineTestResult">ยังไม่ได้ทดสอบ</div>
+                <div class="line-memory-panel">
+                  <div class="section-head">
+                    <div>
+                      <b>ความจำของวิมล</b>
+                      <span>ข้อมูลที่บอทเก็บจากกลุ่มแบบเงียบ ๆ</span>
+                    </div>
+                  </div>
+                  <div class="line-memory-list" id="lineMemoryList"></div>
+                </div>
                 <div class="line-events-list" id="lineEventsList"></div>
               </article>
             </div>

@@ -908,6 +908,76 @@ button {
   margin-bottom: 12px;
 }
 
+.line-ai-panel {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.line-ai-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.line-ai-card span,
+.line-ai-card small {
+  color: var(--muted);
+}
+
+.line-ai-card strong {
+  color: var(--blue);
+  font-size: 20px;
+}
+
+.line-model-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.line-memory-panel {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.line-memory-list {
+  display: grid;
+  gap: 8px;
+}
+
+.line-memory-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: 12px;
+  background: #f0fdf7;
+}
+
+.line-memory-item div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.line-memory-item b,
+.line-memory-item span {
+  overflow-wrap: anywhere;
+}
+
+.line-memory-item span,
+.line-memory-item small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .line-events-list {
   display: grid;
   gap: 8px;

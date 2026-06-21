@@ -1,12 +1,13 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
-import type { AuditEvent, ChatTarget, GroupContext, LineProfile, MemberMemory, ParsedSplitExpense } from "./types";
+import type { AiRuntimeConfig, AuditEvent, ChatTarget, GroupContext, LineProfile, MemberMemory, ParsedSplitExpense } from "./types";
 import { hashId } from "./line";
 
 if (!getApps().length) initializeApp();
 
 const db = getFirestore();
-const defaultAliases = ["@หารกัน", "/ai", "/ดูดวง", "/หาร", "/วิเคราะห์", "/จำ", "/ลืม"];
+const defaultAliases = ["วิมล"];
+const configDocRef = db.collection("appConfig").doc("lineAi");
 
 type MemoryDoc = {
   ownerUserId?: string;
@@ -183,6 +184,88 @@ export async function recentLineEvents(limit = 30): Promise<Record<string, unkno
       receivedAt: data.receivedAt?.toDate?.()?.toISOString?.() || "",
     };
   });
+}
+
+export async function aiUsageSummary(limit = 1000): Promise<Record<string, unknown>> {
+  const snap = await db.collection("lineEventSummaries").orderBy("receivedAt", "desc").limit(limit).get();
+  const summary = {
+    eventCount: 0,
+    openAiCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedUsd: 0,
+    estimatedThb: 0,
+  };
+
+  snap.docs.forEach((doc) => {
+    const data = doc.data();
+    const calls = Number(data.openAiCalls || 0);
+    if (!calls) return;
+    summary.eventCount += 1;
+    summary.openAiCalls += calls;
+    summary.inputTokens += Number(data.inputTokens || 0);
+    summary.outputTokens += Number(data.outputTokens || 0);
+    summary.totalTokens += Number(data.totalTokens || 0);
+    summary.estimatedUsd += Number(data.estimatedUsd || 0);
+    summary.estimatedThb += Number(data.estimatedThb || 0);
+  });
+
+  return summary;
+}
+
+export async function recentPublicMemories(limit = 30): Promise<Record<string, unknown>[]> {
+  const eventsSnap = await db.collection("lineEventSummaries").orderBy("receivedAt", "desc").limit(100).get();
+  const chatIds = eventsSnap.docs
+    .map((doc) => String(doc.get("chatId") || ""))
+    .filter((chatId) => chatId && chatId !== "invalid-signature")
+    .filter((chatId, index, all) => all.indexOf(chatId) === index)
+    .slice(0, 3);
+
+  const memories = await Promise.all(
+    chatIds.map(async (chatId) => {
+      const snap = await db.collection("lineGroups").doc(chatId).collection("memories").orderBy("createdAt", "desc").limit(limit).get();
+      return snap.docs.map((doc) => {
+        const memory = memoryFromDoc(doc.id, doc.data() as MemoryDoc);
+        return {
+          id: memory.id,
+          chatIdHash: hashId(chatId),
+          ownerUserIdHash: hashId(memory.ownerUserId),
+          category: memory.category,
+          text: memory.text,
+          confidence: memory.confidence,
+          createdAt: memory.createdAt,
+        };
+      });
+    }),
+  );
+
+  return memories.flat().sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))).slice(0, limit);
+}
+
+export async function getAiRuntimeConfig(defaultModel: string, modelOptions: Array<{ label: string; value: string }>): Promise<AiRuntimeConfig> {
+  const snap = await configDocRef.get();
+  const configuredModel = String(snap.get("model") || defaultModel || "");
+  const option = modelOptions.find((item) => item.value === configuredModel) || modelOptions[0] || { label: configuredModel, value: configuredModel };
+  return {
+    model: option.value,
+    modelLabel: option.label,
+    updatedAt: snap.get("updatedAt")?.toDate?.()?.toISOString?.() || "",
+  };
+}
+
+export async function setAiRuntimeModel(model: string, modelOptions: Array<{ label: string; value: string }>): Promise<AiRuntimeConfig> {
+  const option = modelOptions.find((item) => item.value === model);
+  if (!option) throw new Error("UnsupportedModel");
+  await configDocRef.set(
+    {
+      model: option.value,
+      modelLabel: option.label,
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+  return getAiRuntimeConfig(option.value, modelOptions);
 }
 
 export async function groupMemoriesForAdmin(chatId: string): Promise<Record<string, unknown>[]> {

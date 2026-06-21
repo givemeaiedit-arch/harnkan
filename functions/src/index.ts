@@ -1,20 +1,24 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
-import { parseCommand, rememberSilentlyFromMessage, runAgentWorkflow } from "./agents";
+import { aiModelOptions, parseCommand, rememberSilentlyFromMessage, runAgentWorkflow } from "./agents";
 import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineSignature } from "./line";
 import {
   ensureLineIdentity,
+  aiUsageSummary,
+  getAiRuntimeConfig,
   getGroupContext,
   groupMemoriesForAdmin,
+  recentPublicMemories,
   recentLineEvents,
   recordAudit,
+  setAiRuntimeModel,
 } from "./repository";
 import type { AuditEvent, LineEvent, LineWebhookBody } from "./types";
 
 const lineChannelSecret = defineSecret("LINE_CHANNEL_SECRET");
 const lineChannelAccessToken = defineSecret("LINE_CHANNEL_ACCESS_TOKEN");
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
-const openaiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
+const defaultOpenAiModel = process.env.OPENAI_MODEL || "gpt-5.4-mini";
 const adminApiKey = process.env.AI_ADMIN_KEY || "";
 
 type EventResult = {
@@ -85,7 +89,24 @@ export const lineConfig = onRequest(
     secrets: [lineChannelSecret, lineChannelAccessToken, openaiApiKey],
     invoker: "public",
   },
-  (_req, res) => {
+  async (req, res) => {
+    if (req.method === "POST") {
+      try {
+        const body = req.body || {};
+        const model = String(body.aiModel || body.model || "");
+        if (!model) {
+          res.status(400).json({ ok: false, error: "aiModel required" });
+          return;
+        }
+        const config = await setAiRuntimeModel(model, aiModelOptions);
+        res.status(200).json({ ok: true, config, modelOptions: aiModelOptions });
+      } catch (error) {
+        res.status(400).json({ ok: false, error: errorName(error) });
+      }
+      return;
+    }
+
+    const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
     res.status(200).json({
       ok: true,
       webhookPath: "/line/webhook",
@@ -95,6 +116,9 @@ export const lineConfig = onRequest(
       aiReplyEnabled: true,
       memoryBackend: "firestore",
       activation: "วิมล",
+      aiModel: aiConfig.model,
+      aiModelLabel: aiConfig.modelLabel,
+      modelOptions: aiModelOptions,
     });
   },
 );
@@ -109,6 +133,8 @@ export const lineEvents = onRequest(
       res.status(200).json({
         ok: true,
         events: await recentLineEvents(),
+        usageSummary: await aiUsageSummary(),
+        memories: await recentPublicMemories(),
       });
     } catch (error) {
       console.error("Read line events failed", { errorCode: errorName(error) });
@@ -191,12 +217,13 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
 
   try {
     const context = await getGroupContext(target);
+    const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
     const agentResult = await runAgentWorkflow({
       command,
       context,
       target,
       openaiApiKey: openaiKey,
-      model: openaiModel,
+      model: aiConfig.model,
     });
 
     const replyToken = event.replyToken || "";
@@ -290,12 +317,13 @@ async function safeRecordAudit(event: AuditEvent): Promise<void> {
 async function rememberSilently(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
   try {
     const context = await getGroupContext(target);
+    const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
     return await rememberSilentlyFromMessage({
       text,
       context,
       target,
       openaiApiKey: openaiKey,
-      model: openaiModel,
+      model: aiConfig.model,
     });
   } catch (error) {
     console.error("Silent memory failed", {
@@ -306,8 +334,8 @@ async function rememberSilently(text: string, target: NonNullable<ReturnType<typ
     return {
       status: "error" as const,
       savedMemoryCount: 0,
-      usage: { model: openaiModel, inputTokens: 0, outputTokens: 0, totalTokens: 0, openAiCalls: 0 },
-      cost: { model: openaiModel, inputUsdPerMillion: 0, outputUsdPerMillion: 0, usdToThb: 0, estimatedUsd: 0, estimatedThb: 0 },
+      usage: { model: defaultOpenAiModel, inputTokens: 0, outputTokens: 0, totalTokens: 0, openAiCalls: 0 },
+      cost: { model: defaultOpenAiModel, inputUsdPerMillion: 0, outputUsdPerMillion: 0, usdToThb: 0, estimatedUsd: 0, estimatedThb: 0 },
     };
   }
 }

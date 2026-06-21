@@ -95,6 +95,19 @@ export type CostEstimate = {
   estimatedThb: number;
 };
 
+export type AiRuntimeConfig = {
+  model: string;
+  modelLabel: string;
+  updatedAt?: string;
+};
+
+export type AiModelOption = {
+  label: string;
+  value: string;
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+};
+
 export type SilentMemoryResult = {
   status: "saved" | "scanned" | "skipped" | "skipped_sensitive" | "error";
   savedMemoryCount: number;

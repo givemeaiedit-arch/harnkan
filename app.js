@@ -1936,6 +1936,13 @@ function lineEnvCommand() {
   ].join("\n");
 }
 
+function defaultLineAiModels() {
+  return [
+    { label: "GPT 5.4 mini", value: "gpt-5.4-mini", inputUsdPerMillion: 0.75, outputUsdPerMillion: 4.5 },
+    { label: "GPT 4o1 mini", value: "gpt-4.1-mini", inputUsdPerMillion: 0.4, outputUsdPerMillion: 1.6 },
+  ];
+}
+
 function lineCurlCommand() {
   return [
     `curl -X POST "${lineWebhookUrl()}" \\`,
@@ -1974,10 +1981,26 @@ async function refreshLineStatus() {
     const tokenText = config.channelAccessTokenConfigured ? "Token พร้อม" : "ยังไม่ตั้ง Token";
     const openaiText = config.openaiApiKeyConfigured ? "OpenAI พร้อม" : config.aiReplyEnabled ? "ยังไม่ตั้ง OpenAI" : "";
     $("#lineConfigStatusLabel").textContent = [secretText, tokenText, openaiText].filter(Boolean).join(" / ");
+    renderLineModelConfig(config);
   } catch {
     $("#lineConfigStatusLabel").textContent = "เชื่อม server ไม่ได้";
   }
   await refreshLineEvents();
+}
+
+function renderLineModelConfig(config) {
+  const select = $("#lineAiModelSelect");
+  if (!select) return;
+  const options = Array.isArray(config.modelOptions) && config.modelOptions.length ? config.modelOptions : defaultLineAiModels();
+  select.innerHTML = options
+    .map((option) => `<option value="${escapeHtml(option.value)}" ${option.value === config.aiModel ? "selected" : ""}>${escapeHtml(option.label)}</option>`)
+    .join("");
+  select.value = config.aiModel || options[0]?.value || "gpt-5.4-mini";
+  const selected = options.find((option) => option.value === select.value) || options[0];
+  const help = $("#lineAiModelHelp");
+  if (help && selected) {
+    help.textContent = `${selected.value} • ประมาณ $${Number(selected.inputUsdPerMillion || 0).toFixed(3)} in / $${Number(selected.outputUsdPerMillion || 0).toFixed(3)} out ต่อ 1M tokens`;
+  }
 }
 
 async function refreshLineEvents() {
@@ -1987,10 +2010,39 @@ async function refreshLineEvents() {
     const response = await fetch(LINE_EVENTS_URL, { cache: "no-store" });
     const data = await response.json();
     const events = Array.isArray(data.events) ? data.events : [];
+    renderLineAiSummary(data.usageSummary || {});
+    renderLineMemories(Array.isArray(data.memories) ? data.memories : []);
     list.innerHTML = events.length ? events.slice(0, 8).map(lineEventMarkup).join("") : emptyState("ยังไม่มี webhook event");
   } catch {
     list.innerHTML = emptyState("อ่าน event ล่าสุดไม่ได้");
   }
+}
+
+function renderLineAiSummary(summary) {
+  const cost = $("#lineAiTotalCostLabel");
+  const usage = $("#lineAiUsageLabel");
+  if (cost) cost.textContent = `${formatUsd(summary.estimatedUsd || 0)} / ${formatThb(summary.estimatedThb || 0)}`;
+  if (usage) {
+    usage.textContent = `${formatInteger(summary.openAiCalls || 0)} calls • ${formatInteger(summary.totalTokens || 0)} tokens จาก ${formatInteger(summary.eventCount || 0)} event`;
+  }
+}
+
+function renderLineMemories(memories) {
+  const list = $("#lineMemoryList");
+  if (!list) return;
+  if (!memories.length) {
+    list.innerHTML = emptyState("ยังไม่มีความจำที่บันทึกไว้");
+    return;
+  }
+  list.innerHTML = memories.slice(0, 12).map((memory) => `
+    <div class="line-memory-item">
+      <div>
+        <b>${escapeHtml(memory.text || "-")}</b>
+        <span>${escapeHtml(memory.category || "note")} • owner ${escapeHtml(memory.ownerUserIdHash || "-")}</span>
+      </div>
+      <small>${escapeHtml(formatThaiDateTime(memory.createdAt))}</small>
+    </div>
+  `).join("");
 }
 
 function lineEventMarkup(entry) {
@@ -2046,10 +2098,30 @@ function lineEventErrorHint(entry) {
 function lineReplyHint(entry) {
   if (!entry.lineReplyStatus || entry.lineReplyOk) return "";
   const detail = entry.lineReplyError ? ` • ${entry.lineReplyError}` : "";
-  if (entry.lineReplyStatus === 400) return `LINE 400: replyToken ไม่ถูกต้อง หมดอายุ หรือถูกใช้ซ้ำ${detail}`;
+  if (entry.lineReplyStatus === 400) return `LINE 400: replyToken ใช้ไม่ได้ มักเกิดจาก event ทดสอบ, token หมดอายุ, หรือถูกใช้ซ้ำ${detail}`;
   if (entry.lineReplyStatus === 401) return `LINE 401: Channel Access Token ไม่ถูกต้องหรือหมดอายุ${detail}`;
   if (entry.lineReplyStatus === 429) return `LINE 429: ส่งข้อความถี่เกินโควตา${detail}`;
   return `LINE ${entry.lineReplyStatus}: ส่งกลับไม่สำเร็จ${detail}`;
+}
+
+async function saveLineAiModel() {
+  const select = $("#lineAiModelSelect");
+  const result = $("#lineTestResult");
+  if (!select || isGithubPagesHost()) return;
+  try {
+    const response = await fetch(LINE_CONFIG_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ aiModel: select.value }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast("บันทึก Model AI แล้ว");
+    if (result) result.textContent = `บันทึก Model AI แล้ว: ${data.config?.modelLabel || select.value}`;
+    await refreshLineStatus();
+  } catch (error) {
+    if (result) result.textContent = `บันทึก Model AI ไม่สำเร็จ: ${error.message}`;
+  }
 }
 
 function formatThaiDateTime(value) {
@@ -2398,6 +2470,7 @@ function bindEvents() {
     const refreshLineButton = event.target.closest("#refreshLineStatusBtn");
     const testLineButton = event.target.closest("#testLineWebhookBtn");
     const saveLineConfigButton = event.target.closest("#saveLineConfigBtn");
+    const saveLineAiModelButton = event.target.closest("#saveLineAiModelBtn");
 
     if (event.target.closest("#addTripBtn")) {
       $("#newTripNameInput").focus();
@@ -2427,6 +2500,7 @@ function bindEvents() {
     if (refreshLineButton) refreshLineStatus();
     if (testLineButton) testLineWebhook();
     if (saveLineConfigButton) saveLineConfigToServer();
+    if (saveLineAiModelButton) saveLineAiModel();
     if (removeConditionButton) {
       const id = removeConditionButton.dataset.removeConditionItem;
       renderConditionItems(collectConditionItemsFromForm().filter((item) => item.id !== id));

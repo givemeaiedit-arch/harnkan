@@ -1,9 +1,14 @@
-import type { AgentResult, ChatTarget, CostEstimate, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense, SilentMemoryResult, TokenUsage } from "./types";
+import type { AgentResult, AiModelOption, ChatTarget, CostEstimate, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense, SilentMemoryResult, TokenUsage } from "./types";
 import { createSplitExpense, deleteUserMemories, saveMemory } from "./repository";
 
 const botWakeWord = "วิมล";
 const harnkanUrl = "https://harnkan-givemeai-gpt-hub.web.app";
 const defaultUsdToThb = Number(process.env.USD_TO_THB_RATE || 32.9);
+
+export const aiModelOptions: AiModelOption[] = [
+  { label: "GPT 5.4 mini", value: "gpt-5.4-mini", inputUsdPerMillion: 0.75, outputUsdPerMillion: 4.5 },
+  { label: "GPT 4o1 mini", value: "gpt-4.1-mini", inputUsdPerMillion: 0.4, outputUsdPerMillion: 1.6 },
+];
 
 type OpenAiMessage = {
   role: "system" | "user" | "assistant";
@@ -531,6 +536,10 @@ function estimateCost(usage: TokenUsage): CostEstimate {
 
 function ratesForModel(model: string): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
   const normalized = model.toLowerCase();
+  const option = aiModelOptions.find((item) => item.value.toLowerCase() === normalized);
+  if (option) return { inputUsdPerMillion: option.inputUsdPerMillion, outputUsdPerMillion: option.outputUsdPerMillion };
   if (normalized.includes("gpt-4o-mini")) return { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 };
+  if (normalized.includes("gpt-4.1-mini")) return { inputUsdPerMillion: 0.4, outputUsdPerMillion: 1.6 };
+  if (normalized.includes("gpt-5.4-mini")) return { inputUsdPerMillion: 0.75, outputUsdPerMillion: 4.5 };
   return { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 };
 }
