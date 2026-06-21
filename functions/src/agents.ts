@@ -1,7 +1,6 @@
 import type { AgentResult, AiModelOption, ChatTarget, CostEstimate, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense, SilentMemoryResult, TokenUsage } from "./types";
 import { createSplitExpense, deleteUserMemories, saveMemory } from "./repository";
 
-const botWakeWord = "วิมล";
 const harnkanUrl = "https://harnkan-givemeai-gpt-hub.web.app";
 const defaultUsdToThb = Number(process.env.USD_TO_THB_RATE || 32.9);
 const femalePersona =
@@ -33,31 +32,40 @@ type CostTracker = {
   openAiCalls: number;
 };
 
-export function parseCommand(rawText: string): ParsedCommand {
-  const text = rawText.trim();
-  const wakeIndex = text.indexOf(botWakeWord);
-  if (wakeIndex < 0) return { invoked: false, route: "general", text, rawPrefix: "" };
+const wakeWords = ["@วิมล", "วิมล", "AI", "ai"];
 
-  const body = `${text.slice(0, wakeIndex)} ${text.slice(wakeIndex + botWakeWord.length)}`.replace(/\s+/g, " ").trim();
-  if (/^(ดูดวง|ดวง|ราศี)\b/i.test(body)) {
-    return { invoked: true, route: "horoscope", text: body || "ดูดวง", rawPrefix: botWakeWord };
+export function parseCommand(rawText: string, options: { invokedByReply?: boolean } = {}): ParsedCommand {
+  const text = rawText.trim();
+  const matchedWake = wakeWords
+    .map((word) => ({ word, index: text.toLowerCase().indexOf(word.toLowerCase()) }))
+    .filter((item) => item.index >= 0)
+    .sort((left, right) => left.index - right.index || right.word.length - left.word.length)[0];
+  if (!matchedWake && !options.invokedByReply) return { invoked: false, route: "general", text, rawPrefix: "" };
+
+  const body = matchedWake
+    ? `${text.slice(0, matchedWake.index)} ${text.slice(matchedWake.index + matchedWake.word.length)}`.replace(/\s+/g, " ").trim()
+    : text;
+  const rawPrefix = matchedWake?.word || "reply";
+  const trigger = options.invokedByReply ? "reply" : "mention";
+  if (/^(ดูดวง|ดวง|ราศี)(?:\s|$)/i.test(body)) {
+    return { invoked: true, route: "horoscope", text: body || "ดูดวง", rawPrefix, trigger };
   }
   if (/(?:หาร|ค่าอาหาร|ค่าเบียร์|จ่าย|โอน|บาท|\d)/i.test(body)) {
-    return { invoked: true, route: "split", text: body || "หารค่าใช้จ่าย", rawPrefix: botWakeWord };
+    return { invoked: true, route: "split", text: body || "หารค่าใช้จ่าย", rawPrefix, trigger };
   }
   if (/(?:วิเคราะห์|ปรับคำพูด|โทน|สุภาพ|แรงไปไหม)/i.test(body)) {
-    return { invoked: true, route: "speech", text: body || "วิเคราะห์คำพูด", rawPrefix: botWakeWord };
+    return { invoked: true, route: "speech", text: body || "วิเคราะห์คำพูด", rawPrefix, trigger };
   }
-  if (/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\b/i.test(body)) {
-    return { invoked: true, route: "memory", text: body.replace(/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s*/i, ""), rawPrefix: botWakeWord };
+  if (/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)(?:\s|$)/i.test(body)) {
+    return { invoked: true, route: "memory", text: body.replace(/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s*/i, ""), rawPrefix, trigger };
   }
-  if (/^(ลืม|ล้างข้อมูล|ลบข้อมูล)\b/i.test(body)) {
-    return { invoked: true, route: "memory_delete", text: body.replace(/^(ลืม|ล้างข้อมูล|ลบข้อมูล)\s*/i, ""), rawPrefix: botWakeWord };
+  if (/^(ลืม|ล้างข้อมูล|ลบข้อมูล)(?:\s|$)/i.test(body)) {
+    return { invoked: true, route: "memory_delete", text: body.replace(/^(ลืม|ล้างข้อมูล|ลบข้อมูล)\s*/i, ""), rawPrefix, trigger };
   }
-  if (/^(ข้อมูลของฉัน|จำอะไรเกี่ยวกับฉัน|profile|memory)\b/i.test(body)) {
-    return { invoked: true, route: "memory_show", text: body, rawPrefix: botWakeWord };
+  if (/^(ข้อมูลของฉัน|จำอะไรเกี่ยวกับฉัน|profile|memory)(?:\s|$)/i.test(body)) {
+    return { invoked: true, route: "memory_show", text: body, rawPrefix, trigger };
   }
-  return { invoked: true, route: "general", text: body || "ช่วยอะไรได้บ้าง", rawPrefix: botWakeWord };
+  return { invoked: true, route: "general", text: body || "ช่วยอะไรได้บ้าง", rawPrefix, trigger };
 }
 
 export async function runAgentWorkflow(input: {
@@ -311,6 +319,42 @@ export async function rememberSilentlyFromMessage(input: {
   return {
     status: strongMemories.length ? "saved" : "scanned",
     savedMemoryCount: strongMemories.length,
+    usage,
+    cost: estimateCost(usage),
+  };
+}
+
+export async function runSpontaneousComment(input: {
+  currentText: string;
+  recentMessages: string[];
+  context: GroupContext;
+  target: ChatTarget;
+  openaiApiKey: string;
+  model: string;
+}): Promise<AgentResult> {
+  const tracker: CostTracker = { model: input.model, inputTokens: 0, outputTokens: 0, openAiCalls: 0 };
+  const reply = await createTextCompletion(input.openaiApiKey, input.model, [
+    {
+      role: "system",
+      content:
+        `${femalePersona} โหมดนี้คือการออกความคิดเห็นเองในกลุ่มแบบสุภาพ ไม่ต้องยาว ไม่ขัดจังหวะ ถ้าไม่มีประเด็นจริงให้ตอบสั้นมาก หลีกเลี่ยงการตัดสินคน และอย่าอ้างว่ารู้เรื่องที่ไม่มีในบริบท`,
+    },
+    {
+      role: "user",
+      content:
+        `ผู้พูดล่าสุด: ${input.context.currentUser.displayName}\n` +
+        `ความจำที่เกี่ยวข้อง:\n${memorySummary(input.context)}\n\n` +
+        `บริบทย้อนหลัง 10 ข้อความ:\n${input.recentMessages.map((message, index) => `${index + 1}. ${message}`).join("\n")}\n\n` +
+        `ข้อความล่าสุด: ${input.currentText}\n\n` +
+        "ถ้าเหมาะจะออกความเห็น ให้ตอบเป็นความเห็นสุภาพ 1-2 ประโยค ถ้าไม่จำเป็น ให้ตอบเป็นข้อสังเกตสั้น ๆ ที่มีประโยชน์",
+    },
+  ], tracker);
+  const usage = usageFromTracker(tracker);
+  return {
+    reply: safetyReview(reply || "วิมลขอเสริมเบา ๆ ว่าคุยกันชัด ๆ น่าจะช่วยให้เข้าใจกันง่ายขึ้นค่ะ"),
+    route: "general",
+    agent: "SpontaneousContextAgent",
+    status: "ok",
     usage,
     cost: estimateCost(usage),
   };

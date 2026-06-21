@@ -14,6 +14,8 @@ export type LineEvent = {
     id?: string;
     type?: string;
     text?: string;
+    quotedMessageId?: string;
+    quoteToken?: string;
   };
 };
 
@@ -65,6 +67,7 @@ export type ParsedCommand = {
   route: AgentRoute;
   text: string;
   rawPrefix: string;
+  trigger?: "mention" | "reply" | "spontaneous" | "";
 };
 
 export type AgentResult = {

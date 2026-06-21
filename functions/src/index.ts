@@ -1,6 +1,6 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
-import { aiModelOptions, parseCommand, rememberSilentlyFromMessage, runAgentWorkflow } from "./agents";
+import { aiModelOptions, parseCommand, rememberSilentlyFromMessage, runAgentWorkflow, runSpontaneousComment } from "./agents";
 import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineSignature } from "./line";
 import {
   ensureLineIdentity,
@@ -8,8 +8,11 @@ import {
   getAiRuntimeConfig,
   getGroupContext,
   groupMemoriesForAdmin,
+  isReplyToKnownBotMessage,
+  recentGroupMessageContext,
   recentPublicMemories,
   recentLineEvents,
+  recordBotReplyMessages,
   recordAudit,
   setAiRuntimeModel,
 } from "./repository";
@@ -20,6 +23,8 @@ const lineChannelAccessToken = defineSecret("LINE_CHANNEL_ACCESS_TOKEN");
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const defaultOpenAiModel = process.env.OPENAI_MODEL || "gpt-5.4-mini";
 const adminApiKey = process.env.AI_ADMIN_KEY || "";
+const spontaneousReplyMinProbability = 0.1;
+const spontaneousReplyMaxProbability = 0.3;
 
 type EventResult = {
   ok: boolean;
@@ -115,7 +120,7 @@ export const lineConfig = onRequest(
       openaiApiKeyConfigured: Boolean(secretValue(openaiApiKey.value())),
       aiReplyEnabled: true,
       memoryBackend: "firestore",
-      activation: "วิมล",
+      activation: "วิมล / @วิมล / AI / reply ข้อความของวิมล / สุ่มแทรกจากบริบท 10-30%",
       aiModel: aiConfig.model,
       aiModelLabel: aiConfig.modelLabel,
       modelOptions: aiModelOptions,
@@ -187,12 +192,45 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
     return { ok: true, replied: false };
   }
 
-  const command = parseCommand(event.message.text || "");
   const profile = await fetchLineProfile(channelAccessToken, target.source);
   await ensureLineIdentity(target, profile);
+  const invokedByReply = await isReplyToKnownBotMessage(target, event);
+  const command = parseCommand(event.message.text || "", { invokedByReply });
 
   if (!command.invoked) {
     const silentMemory = await rememberSilently(event.message.text || "", target, openaiKey);
+    const spontaneousResult = await maybeRunSpontaneousComment(event.message.text || "", target, openaiKey);
+    if (spontaneousResult) {
+      const replyToken = event.replyToken || "";
+      const response = replyToken ? await replyToLine(channelAccessToken, replyToken, spontaneousResult.reply) : null;
+      if (response?.ok) await recordBotReplyMessages(target, await sentMessageIds(response));
+      const lineReplyError = response && !response.ok ? await safeResponseText(response) : "";
+      await safeRecordAudit({
+        chatId: target.chatId,
+        chatType: target.chatType,
+        userIdHash: hashId(target.userId),
+        eventType: "message",
+        messagePreview,
+        route: "general",
+        agent: spontaneousResult.agent,
+        status: response?.ok ? "spontaneous_reply" : "spontaneous_reply_failed",
+        latencyMs: Date.now() - webhookStarted,
+        errorCode: response && !response.ok ? `LINE_REPLY_${response.status}` : "",
+        model: spontaneousResult.usage?.model,
+        inputTokens: spontaneousResult.usage?.inputTokens || 0,
+        outputTokens: spontaneousResult.usage?.outputTokens || 0,
+        totalTokens: spontaneousResult.usage?.totalTokens || 0,
+        openAiCalls: spontaneousResult.usage?.openAiCalls || 0,
+        savedMemoryCount: silentMemory.savedMemoryCount,
+        estimatedUsd: spontaneousResult.cost?.estimatedUsd || 0,
+        estimatedThb: spontaneousResult.cost?.estimatedThb || 0,
+        lineReplyStatus: response?.status || 0,
+        lineReplyOk: Boolean(response?.ok),
+        lineReplyError,
+      });
+      return { ok: Boolean(response?.ok), status: response?.status, route: spontaneousResult.route, agent: spontaneousResult.agent, replied: Boolean(response) };
+    }
+
     await safeRecordAudit({
       chatId: target.chatId,
       chatType: target.chatType,
@@ -243,6 +281,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
     }
 
     const response = await replyToLine(channelAccessToken, replyToken, agentResult.reply);
+    if (response.ok) await recordBotReplyMessages(target, await sentMessageIds(response));
     const lineReplyError = response.ok ? "" : await safeResponseText(response);
     await safeRecordAudit({
       chatId: target.chatId,
@@ -295,6 +334,48 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       errorCode: errorName(error),
     });
     return { ok: false, route: command.route, agent: "TriageAgent", error: errorName(error) };
+  }
+}
+
+async function maybeRunSpontaneousComment(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
+  if (!shouldAttemptSpontaneous(text)) return null;
+  try {
+    const recentMessages = await recentGroupMessageContext(target.chatId, 10);
+    if (recentMessages.length < 3) return null;
+    const context = await getGroupContext(target);
+    const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
+    return await runSpontaneousComment({
+      currentText: text,
+      recentMessages,
+      context,
+      target,
+      openaiApiKey: openaiKey,
+      model: aiConfig.model,
+    });
+  } catch (error) {
+    console.error("Spontaneous comment failed", {
+      chatIdHash: hashId(target.chatId),
+      userIdHash: hashId(target.userId),
+      errorCode: errorName(error),
+    });
+    return null;
+  }
+}
+
+function shouldAttemptSpontaneous(text: string): boolean {
+  const clean = String(text || "").trim();
+  if (clean.length < 4) return false;
+  if (previewLineMessage(clean) === "[masked sensitive message]") return false;
+  const threshold = spontaneousReplyMinProbability + Math.random() * (spontaneousReplyMaxProbability - spontaneousReplyMinProbability);
+  return Math.random() < threshold;
+}
+
+async function sentMessageIds(response: Response): Promise<string[]> {
+  try {
+    const data = (await response.clone().json()) as { sentMessages?: Array<{ id?: string }> };
+    return (data.sentMessages || []).map((message) => String(message.id || "")).filter(Boolean);
+  } catch {
+    return [];
   }
 }
 

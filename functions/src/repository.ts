@@ -1,6 +1,6 @@
 import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, getFirestore, Timestamp } from "firebase-admin/firestore";
-import type { AiRuntimeConfig, AuditEvent, ChatTarget, GroupContext, LineProfile, MemberMemory, ParsedSplitExpense } from "./types";
+import type { AiRuntimeConfig, AuditEvent, ChatTarget, GroupContext, LineProfile, LineEvent, MemberMemory, ParsedSplitExpense } from "./types";
 import { hashId } from "./line";
 
 if (!getApps().length) initializeApp();
@@ -145,6 +145,40 @@ export async function recordAudit(event: AuditEvent): Promise<void> {
     db.collection("lineEventSummaries").add(payload),
     db.collection("lineGroups").doc(event.chatId).collection("events").add(payload),
   ]);
+}
+
+export async function recordBotReplyMessages(target: ChatTarget, messageIds: string[]): Promise<void> {
+  const cleanIds = messageIds.map(String).filter(Boolean).slice(0, 5);
+  if (!cleanIds.length) return;
+  const batch = db.batch();
+  cleanIds.forEach((messageId) => {
+    batch.set(
+      db.collection("lineGroups").doc(target.chatId).collection("botMessages").doc(messageId),
+      {
+        messageId,
+        createdAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  });
+  await batch.commit();
+}
+
+export async function isReplyToKnownBotMessage(target: ChatTarget, event: LineEvent): Promise<boolean> {
+  const quotedMessageId = String(event.message?.quotedMessageId || "");
+  if (!quotedMessageId) return false;
+  const snap = await db.collection("lineGroups").doc(target.chatId).collection("botMessages").doc(quotedMessageId).get();
+  return snap.exists;
+}
+
+export async function recentGroupMessageContext(chatId: string, limit = 10): Promise<string[]> {
+  const snap = await db.collection("lineGroups").doc(chatId).collection("events").orderBy("receivedAt", "desc").limit(Math.max(limit * 2, limit)).get();
+  return snap.docs
+    .map((doc) => String(doc.get("messagePreview") || "").trim())
+    .filter((message) => message && message !== "ไม่แสดงข้อความ เพราะ LINE signature ไม่ผ่าน")
+    .filter((message, index, all) => all.indexOf(message) === index)
+    .slice(0, limit)
+    .reverse();
 }
 
 export async function recentLineEvents(limit = 30): Promise<Record<string, unknown>[]> {
