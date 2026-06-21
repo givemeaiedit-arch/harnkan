@@ -47,7 +47,11 @@ export const lineWebhook = onRequest(
 
     const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody : Buffer.from(JSON.stringify(req.body ?? {}));
     const signature = req.get("x-line-signature");
-    if (!verifyLineSignature(rawBody, signature, lineChannelSecret.value())) {
+    const channelSecret = secretValue(lineChannelSecret.value());
+    const channelAccessToken = secretValue(lineChannelAccessToken.value());
+    const openaiKey = secretValue(openaiApiKey.value());
+
+    if (!verifyLineSignature(rawBody, signature, channelSecret)) {
       console.warn("LINE signature verification failed", { hasSignature: Boolean(signature) });
       res.status(401).json({ ok: false, error: "Invalid LINE signature" });
       return;
@@ -60,7 +64,7 @@ export const lineWebhook = onRequest(
       eventTypes: events.map((event) => event.type).filter(Boolean),
     });
 
-    const results = await Promise.all(events.map((event) => handleLineEvent(event, started)));
+    const results = await Promise.all(events.map((event) => handleLineEvent(event, started, channelAccessToken, openaiKey)));
     res.status(200).json({ ok: true, eventCount: events.length, results });
   },
 );
@@ -75,9 +79,9 @@ export const lineConfig = onRequest(
     res.status(200).json({
       ok: true,
       webhookPath: "/line/webhook",
-      channelSecretConfigured: Boolean(lineChannelSecret.value()),
-      channelAccessTokenConfigured: Boolean(lineChannelAccessToken.value()),
-      openaiApiKeyConfigured: Boolean(openaiApiKey.value()),
+      channelSecretConfigured: Boolean(secretValue(lineChannelSecret.value())),
+      channelAccessTokenConfigured: Boolean(secretValue(lineChannelAccessToken.value())),
+      openaiApiKeyConfigured: Boolean(secretValue(openaiApiKey.value())),
       aiReplyEnabled: true,
       memoryBackend: "firestore",
       activation: "@หารกัน / /ai / /ดูดวง / /หาร / /วิเคราะห์ / /จำ / /ลืม",
@@ -130,7 +134,7 @@ export const aiGroupMemory = onRequest(
   },
 );
 
-async function handleLineEvent(event: LineEvent, webhookStarted: number): Promise<EventResult> {
+async function handleLineEvent(event: LineEvent, webhookStarted: number, channelAccessToken: string, openaiKey: string): Promise<EventResult> {
   const started = Date.now();
   const target = chatTargetFromEvent(event);
   if (!target || event.type !== "message" || event.message?.type !== "text") {
@@ -146,7 +150,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number): Promis
   }
 
   const command = parseCommand(event.message.text || "");
-  const profile = await fetchLineProfile(lineChannelAccessToken.value(), target.source);
+  const profile = await fetchLineProfile(channelAccessToken, target.source);
   await ensureLineIdentity(target, profile);
 
   if (!command.invoked) {
@@ -167,7 +171,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number): Promis
       command,
       context,
       target,
-      openaiApiKey: openaiApiKey.value(),
+      openaiApiKey: openaiKey,
       model: openaiModel,
     });
 
@@ -186,7 +190,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number): Promis
       return { ok: false, route: agentResult.route, agent: agentResult.agent, error: "missing_reply_token" };
     }
 
-    const response = await replyToLine(lineChannelAccessToken.value(), replyToken, agentResult.reply);
+    const response = await replyToLine(channelAccessToken, replyToken, agentResult.reply);
     await safeRecordAudit({
       chatId: target.chatId,
       chatType: target.chatType,
@@ -239,4 +243,8 @@ async function safeRecordAudit(event: AuditEvent): Promise<void> {
 
 function errorName(error: unknown): string {
   return error instanceof Error ? error.name || "Error" : "UnknownError";
+}
+
+function secretValue(value: string): string {
+  return String(value || "").trim();
 }
