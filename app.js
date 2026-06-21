@@ -1997,6 +1997,7 @@ function lineEventMarkup(entry) {
   const first = entry.events?.[0] || {};
   const statusClass = entry.status === "ok" || entry.lineReplyOk ? "ok" : String(entry.status || "").includes("ignored") ? "idle" : "error";
   const replyHint = lineReplyHint(entry);
+  const errorHint = lineEventErrorHint(entry);
   const directionText = entry.lineReplyStatus
     ? `รับแล้ว / ส่งกลับ ${entry.lineReplyStatus}`
     : String(entry.status || "").includes("ignored")
@@ -2019,6 +2020,7 @@ function lineEventMarkup(entry) {
           <small>Route: ${escapeHtml(entry.route || "-")}</small>
           <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
           ${entry.errorCode ? `<small class="line-event-error">Error: ${escapeHtml(entry.errorCode)}</small>` : ""}
+          ${errorHint ? `<small class="line-event-error">${escapeHtml(errorHint)}</small>` : ""}
           ${replyHint ? `<small class="line-event-error">${escapeHtml(replyHint)}</small>` : ""}
         </div>
         <div class="line-event-cost">
@@ -2031,6 +2033,13 @@ function lineEventMarkup(entry) {
       <small>${escapeHtml(formatThaiDateTime(entry.receivedAt))}</small>
     </div>
   `;
+}
+
+function lineEventErrorHint(entry) {
+  if (entry.errorCode === "LINE_SIGNATURE_INVALID") {
+    return "Channel Secret ใน Firebase ไม่ตรงกับ Channel Secret ของ LINE OA ตอนนี้ ระบบจึงไม่อ่าน/ไม่ตอบข้อความนี้";
+  }
+  return "";
 }
 
 function lineReplyHint(entry) {

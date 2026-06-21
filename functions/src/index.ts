@@ -53,6 +53,16 @@ export const lineWebhook = onRequest(
 
     if (!verifyLineSignature(rawBody, signature, channelSecret)) {
       console.warn("LINE signature verification failed", { hasSignature: Boolean(signature) });
+      await safeRecordAudit({
+        chatId: "invalid-signature",
+        chatType: "user",
+        userIdHash: "",
+        eventType: "webhook",
+        messagePreview: "ไม่แสดงข้อความ เพราะ LINE signature ไม่ผ่าน",
+        status: "signature_failed",
+        latencyMs: Date.now() - started,
+        errorCode: "LINE_SIGNATURE_INVALID",
+      });
       res.status(401).json({ ok: false, error: "Invalid LINE signature" });
       return;
     }
