@@ -2098,7 +2098,7 @@ function lineEventErrorHint(entry) {
 function lineReplyHint(entry) {
   if (!entry.lineReplyStatus || entry.lineReplyOk) return "";
   const detail = entry.lineReplyError ? ` • ${entry.lineReplyError}` : "";
-  if (entry.lineReplyStatus === 400) return `LINE 400: replyToken ใช้ไม่ได้ มักเกิดจาก event ทดสอบ, token หมดอายุ, หรือถูกใช้ซ้ำ${detail}`;
+  if (entry.lineReplyStatus === 400) return "LINE 400: ตอบกลับไม่ทัน/เป็น event เก่าหรือ event ทดสอบ จึงใช้ replyToken ไม่ได้";
   if (entry.lineReplyStatus === 401) return `LINE 401: Channel Access Token ไม่ถูกต้องหรือหมดอายุ${detail}`;
   if (entry.lineReplyStatus === 429) return `LINE 429: ส่งข้อความถี่เกินโควตา${detail}`;
   return `LINE ${entry.lineReplyStatus}: ส่งกลับไม่สำเร็จ${detail}`;

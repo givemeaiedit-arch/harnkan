@@ -4,6 +4,8 @@ import { createSplitExpense, deleteUserMemories, saveMemory } from "./repository
 const botWakeWord = "วิมล";
 const harnkanUrl = "https://harnkan-givemeai-gpt-hub.web.app";
 const defaultUsdToThb = Number(process.env.USD_TO_THB_RATE || 32.9);
+const femalePersona =
+  "คุณคือวิมล ผู้ช่วย AI ผู้หญิงในกลุ่ม LINE พูดภาษาไทยแบบผู้หญิง ใช้คำลงท้ายค่ะ/นะคะ แทนตัวเองว่าวิมล ห้ามใช้คำว่า ผม หรือ ครับ น้ำเสียงสุภาพ อบอุ่น เป็นกันเอง ขี้เล่นเล็กน้อย และตอบให้เป็นธรรมชาติ";
 
 export const aiModelOptions: AiModelOption[] = [
   { label: "GPT 5.4 mini", value: "gpt-5.4-mini", inputUsdPerMillion: 0.75, outputUsdPerMillion: 4.5 },
@@ -99,7 +101,7 @@ export async function runAgentWorkflow(input: {
       errorCode: error instanceof Error ? error.name : "unknown",
     });
     return {
-      reply: "ขอโทษครับ ตอนนี้ระบบ AI มีปัญหาชั่วคราว ลองพิมพ์ใหม่อีกครั้งได้เลยครับ",
+      reply: "ขอโทษค่ะ ตอนนี้วิมลมีปัญหาชั่วคราว ลองพิมพ์ใหม่อีกครั้งได้เลยนะคะ",
       route: command.route,
       agent: "SafetyReviewAgent",
       status: "error",
@@ -114,7 +116,7 @@ async function runGeneralChatAgent(text: string, context: GroupContext, openaiAp
     {
       role: "system",
       content:
-        "คุณคือ GeneralChatAgent ของบอทหารกันใน LINE Group ตอบภาษาไทยสั้น ชัดเจน เป็นกันเอง ถ้างานควรใช้คำสั่งเฉพาะ ให้แนะนำคำสั่งที่ถูกต้อง เช่น /หาร /ดูดวง /วิเคราะห์ /จำ",
+        `${femalePersona} ตอบสั้น ชัดเจน ถ้างานเกี่ยวกับหารเงิน ดูดวง วิเคราะห์คำพูด หรือความจำ ให้ช่วยต่อจากข้อความธรรมชาติได้ ไม่ต้องบังคับใช้คำสั่ง slash`,
     },
     {
       role: "user",
@@ -123,7 +125,7 @@ async function runGeneralChatAgent(text: string, context: GroupContext, openaiAp
   ], tracker);
 
   return {
-    reply: reply || "เรียกผมด้วย /หาร /ดูดวง /วิเคราะห์ หรือ /จำ ได้เลยครับ",
+    reply: reply || "เรียกวิมลด้วยคำว่า “วิมล” แล้วพิมพ์เรื่องที่อยากให้ช่วยได้เลยค่ะ",
     route: "general",
     agent: "GeneralChatAgent",
     status: "ok",
@@ -140,7 +142,7 @@ async function runMemoryAgent(
 ): Promise<AgentResult> {
   if (isSensitiveText(text)) {
     return {
-      reply: "ข้อมูลนี้ดูอ่อนไหว ผมจะไม่บันทึกให้นะครับ",
+      reply: "ข้อมูลนี้ดูอ่อนไหว วิมลจะไม่บันทึกให้นะคะ",
       route: "memory",
       agent: "MemoryAgent",
       status: "blocked",
@@ -154,7 +156,7 @@ async function runMemoryAgent(
 
   await Promise.all(usable.map((memory) => saveMemory(target, memory)));
   return {
-    reply: `จำให้แล้วครับ (${usable.length} รายการ)\n${usable.map((item) => `- ${item.text}`).join("\n")}`,
+    reply: `วิมลจำให้แล้วค่ะ (${usable.length} รายการ)\n${usable.map((item) => `- ${item.text}`).join("\n")}`,
     route: "memory",
     agent: "MemoryAgent",
     status: "ok",
@@ -166,14 +168,14 @@ function runMemoryShowAgent(context: GroupContext): AgentResult {
   const memories = context.currentUser.memories;
   if (!memories.length) {
     return {
-      reply: "ตอนนี้ผมยังไม่มีข้อมูลที่จำเกี่ยวกับคุณในกลุ่มนี้ครับ",
+      reply: "ตอนนี้วิมลยังไม่มีข้อมูลที่จำเกี่ยวกับคุณในกลุ่มนี้ค่ะ",
       route: "memory_show",
       agent: "MemoryAgent",
       status: "ok",
     };
   }
   return {
-    reply: `ข้อมูลที่ผมจำเกี่ยวกับคุณในกลุ่มนี้:\n${memories.map((memory) => `- ${memory.text}`).join("\n")}`,
+    reply: `ข้อมูลที่วิมลจำเกี่ยวกับคุณในกลุ่มนี้:\n${memories.map((memory) => `- ${memory.text}`).join("\n")}`,
     route: "memory_show",
     agent: "MemoryAgent",
     status: "ok",
@@ -183,7 +185,7 @@ function runMemoryShowAgent(context: GroupContext): AgentResult {
 async function runMemoryDeleteAgent(text: string, target: ChatTarget): Promise<AgentResult> {
   const count = await deleteUserMemories(target, text || "ทั้งหมด");
   return {
-    reply: count ? `ลบข้อมูลความจำของคุณแล้ว ${count} รายการครับ` : "ยังไม่พบข้อมูลของคุณที่ตรงกับคำขอลบครับ",
+    reply: count ? `ลบข้อมูลความจำของคุณแล้ว ${count} รายการค่ะ` : "ยังไม่พบข้อมูลของคุณที่ตรงกับคำขอลบค่ะ",
     route: "memory_delete",
     agent: "MemoryAgent",
     status: "ok",
@@ -202,7 +204,7 @@ async function runSplitBillAgent(
   const sessionId = await createSplitExpense(target, parsed);
   if (parsed.needsMoreInfo) {
     return {
-      reply: parsed.question || "ขอข้อมูลเพิ่มนิดครับ รายการนี้จำนวนเงินเท่าไหร่ ใครจ่าย และหารใครบ้าง?",
+      reply: parsed.question || "ขอข้อมูลเพิ่มนิดค่ะ รายการนี้จำนวนเงินเท่าไหร่ ใครจ่าย และหารใครบ้างคะ?",
       route: "split",
       agent: "SplitBillAgent",
       status: "needs_input",
@@ -214,7 +216,7 @@ async function runSplitBillAgent(
   const excluded = parsed.excluded.length ? `\nไม่หาร: ${parsed.excluded.join(", ")}` : "";
   return {
     reply:
-      `บันทึกร่างรายการหารแล้วครับ\n` +
+      `วิมลบันทึกร่างรายการหารให้แล้วค่ะ\n` +
       `รายการ: ${parsed.title}\n` +
       `ยอด: ${formatBaht(parsed.amount)} บาท\n` +
       `คนจ่าย: ${parsed.payerName || "ยังไม่ระบุ"}\n` +
@@ -232,7 +234,7 @@ async function runHoroscopeAgent(text: string, context: GroupContext, openaiApiK
     {
       role: "system",
       content:
-        "คุณคือ HoroscopeAgent ตอบดูดวงภาษาไทยเพื่อความบันเทิงเท่านั้น ห้ามให้คำแนะนำการเงิน สุขภาพ หรือกฎหมายแบบจริงจัง ถ้าไม่มีวันเกิดให้ดูแบบภาพรวมและชวนบอกวันเกิดได้",
+        `${femalePersona} คุณคือ HoroscopeAgent ตอบดูดวงภาษาไทยเพื่อความบันเทิงเท่านั้น ห้ามให้คำแนะนำการเงิน สุขภาพ หรือกฎหมายแบบจริงจัง ถ้าไม่มีวันเกิดให้ดูแบบภาพรวมและชวนบอกวันเกิดได้`,
     },
     {
       role: "user",
@@ -240,7 +242,7 @@ async function runHoroscopeAgent(text: string, context: GroupContext, openaiApiK
     },
   ], tracker);
   return {
-    reply: reply || "ดูดวงแบบสนุก ๆ วันนี้เหมาะกับการคุยให้ชัด เคลียร์ยอดให้ไว และอย่าเพิ่งรีบตัดสินใจเรื่องใหญ่ครับ",
+    reply: reply || "ดูดวงแบบสนุก ๆ วันนี้เหมาะกับการคุยให้ชัด เคลียร์ยอดให้ไว และอย่าเพิ่งรีบตัดสินใจเรื่องใหญ่นะคะ",
     route: "horoscope",
     agent: "HoroscopeAgent",
     status: "ok",
@@ -252,7 +254,7 @@ async function runSpeechAnalysisAgent(text: string, context: GroupContext, opena
     {
       role: "system",
       content:
-        "คุณคือ SpeechAnalysisAgent วิเคราะห์คำพูดโดยไม่ตัดสิน ไม่วินิจฉัยบุคลิก และไม่กล่าวหาบุคคล ตอบเป็น 3 หัวข้อ: โทนโดยรวม, จุดที่อาจเข้าใจผิด, เวอร์ชันสุภาพขึ้น",
+        `${femalePersona} คุณคือ SpeechAnalysisAgent วิเคราะห์คำพูดโดยไม่ตัดสิน ไม่วินิจฉัยบุคลิก และไม่กล่าวหาบุคคล ตอบเป็น 3 หัวข้อ: โทนโดยรวม, จุดที่อาจเข้าใจผิด, เวอร์ชันสุภาพขึ้น`,
     },
     {
       role: "user",
@@ -262,7 +264,7 @@ async function runSpeechAnalysisAgent(text: string, context: GroupContext, opena
   return {
     reply:
       reply ||
-      "โทนโดยรวม: ยังวิเคราะห์ไม่ได้ชัดครับ\nจุดที่อาจเข้าใจผิด: ข้อความสั้นเกินไป\nเวอร์ชันสุภาพขึ้น: ลองส่งประโยคเต็มมาให้ผมช่วยปรับได้ครับ",
+      "โทนโดยรวม: ยังวิเคราะห์ไม่ได้ชัดค่ะ\nจุดที่อาจเข้าใจผิด: ข้อความสั้นเกินไป\nเวอร์ชันสุภาพขึ้น: ลองส่งประโยคเต็มมาให้วิมลช่วยปรับได้ค่ะ",
     route: "speech",
     agent: "SpeechAnalysisAgent",
     status: "ok",
@@ -349,7 +351,7 @@ async function extractMemories(
     {
       role: "system",
       content:
-        "คุณคือ MemoryAgent สกัดเฉพาะข้อมูลที่ควรจำในกลุ่ม LINE เช่น ชื่อเล่น อาหารที่ไม่กิน วันเกิด ความชอบ หรือเงื่อนไขหารเงิน ห้ามสกัดรหัสผ่าน token secret เลขบัตร เลขบัญชี หรือข้อมูลสุขภาพละเอียด ถ้าไม่มีข้อมูลที่ควรจำให้ memories เป็น []",
+        "คุณคือ MemoryAgent สกัดเฉพาะข้อมูลที่ควรจำในกลุ่ม LINE เช่น ชื่อเล่น อาหารที่ไม่กิน วันเกิด ความชอบ เลขสำคัญที่ผู้ใช้บอกเอง หรือเงื่อนไขหารเงิน ห้ามสกัดรหัสผ่าน token secret เลขบัตร เลขบัญชี หรือข้อมูลสุขภาพละเอียด ถ้าไม่มีข้อมูลที่ควรจำให้ memories เป็น []",
     },
     {
       role: "user",
@@ -416,20 +418,16 @@ async function parseSplitExpense(
 
 async function createTextCompletion(openaiApiKey: string, model: string, messages: OpenAiMessage[], tracker: CostTracker): Promise<string> {
   if (!openaiApiKey) return "";
+  const body = chatCompletionBody(model, messages, { temperature: 0.4, tokenLimit: 650 });
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${openaiApiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      temperature: 0.4,
-      max_tokens: 650,
-      messages,
-    }),
+    body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`OPENAI_TEXT_${response.status}`);
+  if (!response.ok) throw new Error(`OPENAI_TEXT_${response.status}: ${await safeOpenAiError(response)}`);
   const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: OpenAiUsage };
   recordUsage(tracker, data.usage);
   return data.choices?.[0]?.message?.content?.trim() || "";
@@ -437,28 +435,27 @@ async function createTextCompletion(openaiApiKey: string, model: string, message
 
 async function createJsonCompletion<T>(openaiApiKey: string, model: string, schema: Record<string, unknown>, messages: OpenAiMessage[], tracker: CostTracker): Promise<T | null> {
   if (!openaiApiKey) return null;
+  const body = chatCompletionBody(model, messages, {
+    temperature: 0.1,
+    tokenLimit: 700,
+    responseFormat: {
+      type: "json_schema",
+      json_schema: {
+        name: "harnkan_structured_output",
+        strict: true,
+        schema,
+      },
+    },
+  });
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${openaiApiKey}`,
     },
-    body: JSON.stringify({
-      model,
-      temperature: 0.1,
-      max_tokens: 700,
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "harnkan_structured_output",
-          strict: true,
-          schema,
-        },
-      },
-      messages,
-    }),
+    body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`OPENAI_JSON_${response.status}`);
+  if (!response.ok) throw new Error(`OPENAI_JSON_${response.status}: ${await safeOpenAiError(response)}`);
   const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: OpenAiUsage };
   recordUsage(tracker, data.usage);
   const content = data.choices?.[0]?.message?.content;
@@ -471,7 +468,44 @@ function safetyReview(reply: string): string {
     .replace(/sk-[A-Za-z0-9_-]{12,}/g, "[redacted]")
     .replace(/(channel\s*(secret|access token)|api\s*key)\s*[:=]\s*\S+/gi, "$1: [redacted]")
     .trim();
-  return clean.slice(0, 4800) || "ขอโทษครับ ผมยังตอบเรื่องนี้ไม่ได้";
+  return feminizeReply(clean).slice(0, 4800) || "ขอโทษค่ะ วิมลยังตอบเรื่องนี้ไม่ได้";
+}
+
+function feminizeReply(text: string): string {
+  return text
+    .replace(/นะครับ/g, "นะคะ")
+    .replace(/ครับผม/g, "ค่ะ")
+    .replace(/ครับ/g, "ค่ะ")
+    .replace(/\bผม\b/g, "วิมล")
+    .replace(/(^|\s)ผม/g, "$1วิมล");
+}
+
+function chatCompletionBody(
+  model: string,
+  messages: OpenAiMessage[],
+  options: { temperature: number; tokenLimit: number; responseFormat?: Record<string, unknown> },
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model,
+    temperature: options.temperature,
+    messages,
+  };
+  body[usesMaxCompletionTokens(model) ? "max_completion_tokens" : "max_tokens"] = options.tokenLimit;
+  if (options.responseFormat) body.response_format = options.responseFormat;
+  return body;
+}
+
+function usesMaxCompletionTokens(model: string): boolean {
+  return /^gpt-5/i.test(model);
+}
+
+async function safeOpenAiError(response: Response): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.replace(/sk-[A-Za-z0-9_-]{12,}/g, "[redacted]").slice(0, 240);
+  } catch {
+    return "";
+  }
 }
 
 function isSensitiveText(text: string): boolean {
