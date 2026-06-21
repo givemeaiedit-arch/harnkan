@@ -829,6 +829,113 @@ button {
   align-items: start;
 }
 
+.line-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
+  gap: 22px;
+  align-items: start;
+}
+
+.line-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.line-status-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.line-status-card span,
+.line-status-card small {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.line-status-card strong {
+  min-width: 0;
+  color: #0f172a;
+  overflow-wrap: anywhere;
+}
+
+.line-warning {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid #fed7aa;
+  border-radius: 12px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-weight: 700;
+}
+
+.line-warning svg {
+  width: 22px;
+  height: 22px;
+}
+
+.line-command-box {
+  display: grid;
+  gap: 12px;
+}
+
+.line-command-box pre,
+.line-result {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #0f172a;
+  color: #e2e8f0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.line-test-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.line-events-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.line-event-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.line-event-row div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.line-event-row span,
+.line-event-row small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .inline-form,
 .expense-form {
   display: grid;
@@ -1843,7 +1950,8 @@ body.has-modal {
   }
 
   .expense-layout,
-  .settlement-layout {
+  .settlement-layout,
+  .line-layout {
     grid-template-columns: 1fr;
   }
 
@@ -2035,7 +2143,7 @@ body.has-modal {
     bottom: 12px;
     z-index: 50;
     display: grid;
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(7, 1fr);
     min-height: 80px;
     padding: 8px 6px;
     border: 1px solid var(--line);
@@ -2096,6 +2204,12 @@ body.has-modal {
   .hero-actions {
     justify-content: end;
     grid-column: 1 / -1;
+  }
+
+  .line-status-grid,
+  .line-test-actions,
+  .line-event-row {
+    grid-template-columns: 1fr;
   }
 
   .hero-actions .primary-outline {

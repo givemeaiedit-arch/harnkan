@@ -33,3 +33,29 @@ http://<host-ip>:4174/index.html
 ```
 
 โหมด LAN จะใช้ `data.json` เป็นไฟล์ข้อมูลกลางในเครื่อง host ไฟล์นี้ถูก ignore ไม่ควรอัปขึ้น public repo เพราะอาจมีข้อมูลทริป บัญชี และสลิป
+
+## LINE OA Webhook
+
+เว็บมีหน้า `LINE OA Webhook` สำหรับคัดลอก webhook URL, สร้างคำสั่งตั้งค่า และทดสอบ endpoint
+
+เมื่อรัน backend ด้วย `server.py` จะมี endpoint:
+
+```text
+POST /line/webhook
+```
+
+ตั้งค่า secret/token ก่อนรัน server:
+
+```powershell
+$env:LINE_CHANNEL_SECRET="<CHANNEL_SECRET>"
+$env:LINE_CHANNEL_ACCESS_TOKEN="<CHANNEL_ACCESS_TOKEN>"
+python server.py
+```
+
+นำ URL แบบ HTTPS ที่ชี้มาที่ backend ไปใส่ใน LINE Developers Console:
+
+```text
+https://<your-backend-domain>/line/webhook
+```
+
+หมายเหตุ: GitHub Pages เป็น static site จึงรับ webhook จาก LINE โดยตรงไม่ได้ ต้อง deploy `server.py` หรือ backend equivalent บน public HTTPS เช่น VPS, Render, Railway, Cloud Run หรือใช้ tunnel ระหว่างทดสอบ

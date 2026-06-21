@@ -1,5 +1,6 @@
 # Local shared state and private trip data
 data.json
+line_events.json
 
 # Reference/mockup images
 ChatGPT Image*.png

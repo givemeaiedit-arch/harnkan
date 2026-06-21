@@ -35,6 +35,9 @@
           <button class="nav-item" data-view="settlements">
             <i data-lucide="arrow-left-right"></i><span>ใครจ่ายให้ใคร</span>
           </button>
+          <button class="nav-item" data-view="line">
+            <i data-lucide="bot"></i><span>LINE OA Webhook</span>
+          </button>
         </nav>
 
         <div class="share-box">
@@ -302,6 +305,72 @@
               </article>
             </div>
           </section>
+
+          <section class="view" id="view-line" aria-label="LINE OA Webhook">
+            <div class="line-layout">
+              <article class="panel line-setup-panel">
+                <div class="panel-title">
+                  <span class="soft-icon mint"><i data-lucide="bot"></i></span>
+                  <h2>LINE OA Webhook</h2>
+                </div>
+                <div class="line-status-grid">
+                  <div class="line-status-card">
+                    <span>Webhook URL</span>
+                    <strong id="lineWebhookUrlLabel">-</strong>
+                    <button class="secondary-button" id="copyLineWebhookUrlBtn" type="button"><i data-lucide="copy"></i>คัดลอก URL</button>
+                  </div>
+                  <div class="line-status-card">
+                    <span>โหมดที่ใช้งาน</span>
+                    <strong id="lineRuntimeLabel">-</strong>
+                    <small id="lineRuntimeHelp">-</small>
+                  </div>
+                  <div class="line-status-card">
+                    <span>สถานะ Secret / Token</span>
+                    <strong id="lineConfigStatusLabel">-</strong>
+                    <small>อ่านจาก environment ของ `server.py` เท่านั้น</small>
+                  </div>
+                </div>
+
+                <div class="line-warning">
+                  <i data-lucide="circle-help"></i>
+                  <span>LINE OA ต้องใช้ Webhook URL แบบ HTTPS ที่เข้าถึงจากอินเทอร์เน็ตได้ GitHub Pages เป็น static site จึงรับ webhook โดยตรงไม่ได้ ต้อง deploy `server.py` หรือ backend ตัวนี้ไว้บน public HTTPS ก่อน</span>
+                </div>
+
+                <div class="line-command-box">
+                  <div class="section-head">
+                    <div>
+                      <b>ตั้งค่า server.py</b>
+                      <span>ใส่ Channel Secret และ Channel Access Token ในเครื่อง/โฮสต์ backend แล้ว restart server</span>
+                    </div>
+                    <button class="text-action" id="copyLineEnvBtn" type="button"><i data-lucide="copy"></i>คัดลอกคำสั่ง</button>
+                  </div>
+                  <label>
+                    <span>Channel Secret</span>
+                    <input id="lineChannelSecretInput" type="password" placeholder="ใส่เพื่อสร้างคำสั่ง ไม่บันทึกลงเว็บ" autocomplete="off" />
+                  </label>
+                  <label>
+                    <span>Channel Access Token</span>
+                    <input id="lineAccessTokenInput" type="password" placeholder="ใส่เพื่อสร้างคำสั่ง ไม่บันทึกลงเว็บ" autocomplete="off" />
+                  </label>
+                  <pre id="lineEnvCommandBox"></pre>
+                </div>
+              </article>
+
+              <article class="panel line-test-panel">
+                <div class="panel-title">
+                  <span class="soft-icon blue"><i data-lucide="terminal"></i></span>
+                  <h2>ทดสอบและดู event ล่าสุด</h2>
+                  <button class="text-action" id="refreshLineStatusBtn" type="button">รีเฟรช <i data-lucide="refresh-cw"></i></button>
+                </div>
+                <div class="line-test-actions">
+                  <button class="primary-button" id="testLineWebhookBtn" type="button"><i data-lucide="send"></i>ทดสอบ endpoint</button>
+                  <button class="secondary-button" id="copyLineCurlBtn" type="button"><i data-lucide="copy"></i>คัดลอก curl ทดสอบ</button>
+                </div>
+                <div class="line-result" id="lineTestResult">ยังไม่ได้ทดสอบ</div>
+                <div class="line-events-list" id="lineEventsList"></div>
+              </article>
+            </div>
+          </section>
         </main>
       </div>
     </div>
@@ -313,6 +382,7 @@
       <button class="bottom-item" data-view="settlements"><i data-lucide="arrow-left-right"></i><span>โอน</span></button>
       <button class="bottom-item" data-view="rules"><i data-lucide="settings"></i><span>เงื่อนไข</span></button>
       <button class="bottom-item" data-view="history"><i data-lucide="archive"></i><span>ย้อนหลัง</span></button>
+      <button class="bottom-item" data-view="line"><i data-lucide="bot"></i><span>LINE</span></button>
     </nav>
 
     <div class="detail-modal" id="settlementDetailModal" aria-hidden="true">

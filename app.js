@@ -1,5 +1,8 @@
 const STORAGE_KEY = "harnkan-manual-state-v1";
 const API_STATE_URL = "/api/state";
+const LINE_CONFIG_URL = "/api/line/config";
+const LINE_EVENTS_URL = "/api/line/events";
+const LINE_WEBHOOK_PATH = "/line/webhook";
 const CANCEL_TRANSFER_LABEL = "\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e01\u0e32\u0e23\u0e42\u0e2d\u0e19";
 const CANCEL_TRANSFER_CONFIRM = "\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19\u0e17\u0e35\u0e48\u0e08\u0e30\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e01\u0e32\u0e23\u0e42\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e44\u0e2b\u0e21?";
 let remoteSaveEnabled = false;
@@ -1148,6 +1151,10 @@ function iconMarkup(icon) {
     archive: '<rect x="3" y="4" width="18" height="5" rx="1"/><path d="M5 9v11h14V9"/><path d="M10 13h4"/>',
     copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
     "share-2": '<circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 10.6l6.8-4.2"/><path d="M8.6 13.4l6.8 4.2"/>',
+    bot: '<path d="M12 8V4"/><rect x="5" y="8" width="14" height="11" rx="3"/><path d="M8 13h.01"/><path d="M16 13h.01"/><path d="M9 17h6"/>',
+    terminal: '<path d="M4 17l6-6-6-6"/><path d="M12 19h8"/>',
+    "refresh-cw": '<path d="M21 12a9 9 0 0 1-15.3 6.4"/><path d="M3 12A9 9 0 0 1 18.3 5.6"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/>',
+    send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>',
     check: '<path d="M20 6L9 17l-5-5"/>',
     x: '<path d="M18 6L6 18"/><path d="M6 6l12 12"/>',
   };
@@ -1910,6 +1917,151 @@ function renderStaticCopy() {
   }
 }
 
+function isGithubPagesHost() {
+  return location.hostname.endsWith("github.io");
+}
+
+function lineWebhookUrl() {
+  if (isGithubPagesHost()) return "https://<your-backend-domain>/line/webhook";
+  return `${location.origin}${LINE_WEBHOOK_PATH}`;
+}
+
+function lineEnvCommand() {
+  const secret = $("#lineChannelSecretInput")?.value.trim() || "<CHANNEL_SECRET>";
+  const token = $("#lineAccessTokenInput")?.value.trim() || "<CHANNEL_ACCESS_TOKEN>";
+  return [
+    `$env:LINE_CHANNEL_SECRET="${secret}"`,
+    `$env:LINE_CHANNEL_ACCESS_TOKEN="${token}"`,
+    "python server.py",
+  ].join("\n");
+}
+
+function lineCurlCommand() {
+  return [
+    `curl -X POST "${lineWebhookUrl()}" \\`,
+    `  -H "Content-Type: application/json" \\`,
+    `  -d "{\\"destination\\":\\"local-test\\",\\"events\\":[]}"`,
+  ].join("\n");
+}
+
+function renderLineWebhookPage() {
+  const webhookLabel = $("#lineWebhookUrlLabel");
+  if (!webhookLabel) return;
+  webhookLabel.textContent = lineWebhookUrl();
+  $("#lineRuntimeLabel").textContent = isGithubPagesHost() ? "GitHub Pages" : "Server mode";
+  $("#lineRuntimeHelp").textContent = isGithubPagesHost()
+    ? "หน้านี้เป็น static site จึงใช้ดูคู่มือ/คัดลอกคำสั่งได้ แต่รับ webhook จริงไม่ได้"
+    : "พร้อมใช้ endpoint บน origin นี้ ถ้าเปิดจาก public HTTPS";
+  $("#lineEnvCommandBox").textContent = lineEnvCommand();
+  $("#lineConfigStatusLabel").textContent = "กำลังตรวจสอบ...";
+  if (isGithubPagesHost()) {
+    $("#lineConfigStatusLabel").textContent = "ต้อง deploy backend";
+    $("#lineEventsList").innerHTML = emptyState("GitHub Pages ไม่มี backend สำหรับรับ LINE webhook โดยตรง");
+    return;
+  }
+  refreshLineStatus();
+}
+
+async function refreshLineStatus() {
+  if (isGithubPagesHost()) {
+    renderLineWebhookPage();
+    return;
+  }
+  try {
+    const configResponse = await fetch(LINE_CONFIG_URL, { cache: "no-store" });
+    const config = await configResponse.json();
+    const secretText = config.channelSecretConfigured ? "Secret พร้อม" : "ยังไม่ตั้ง Secret";
+    const tokenText = config.channelAccessTokenConfigured ? "Token พร้อม" : "ยังไม่ตั้ง Token";
+    $("#lineConfigStatusLabel").textContent = `${secretText} / ${tokenText}`;
+  } catch {
+    $("#lineConfigStatusLabel").textContent = "เชื่อม server ไม่ได้";
+  }
+  await refreshLineEvents();
+}
+
+async function refreshLineEvents() {
+  const list = $("#lineEventsList");
+  if (!list || isGithubPagesHost()) return;
+  try {
+    const response = await fetch(LINE_EVENTS_URL, { cache: "no-store" });
+    const data = await response.json();
+    const events = Array.isArray(data.events) ? data.events : [];
+    list.innerHTML = events.length ? events.slice(0, 8).map(lineEventMarkup).join("") : emptyState("ยังไม่มี webhook event");
+  } catch {
+    list.innerHTML = emptyState("อ่าน event ล่าสุดไม่ได้");
+  }
+}
+
+function lineEventMarkup(entry) {
+  const first = entry.events?.[0] || {};
+  return `
+    <div class="line-event-row">
+      <div>
+        <b>${escapeHtml(first.type || "webhook")}${first.messageType ? ` / ${escapeHtml(first.messageType)}` : ""}</b>
+        <span>${escapeHtml(first.text || "ไม่มีข้อความ")} ${entry.eventCount ? `(${entry.eventCount} event)` : ""}</span>
+      </div>
+      <small>${escapeHtml(entry.receivedAt || "")}</small>
+    </div>
+  `;
+}
+
+function updateLineEnvCommand() {
+  const target = $("#lineEnvCommandBox");
+  if (target) target.textContent = lineEnvCommand();
+}
+
+async function copyLineWebhookUrl() {
+  if (await copyText(lineWebhookUrl())) showToast("คัดลอก Webhook URL แล้ว");
+  else showCopyFallback(lineWebhookUrl());
+}
+
+async function copyLineEnvCommand() {
+  const text = lineEnvCommand();
+  if (await copyText(text)) showToast("คัดลอกคำสั่งตั้งค่า LINE แล้ว");
+  else showCopyFallback(text);
+}
+
+async function copyLineCurlCommand() {
+  const text = lineCurlCommand();
+  if (await copyText(text)) showToast("คัดลอก curl ทดสอบแล้ว");
+  else showCopyFallback(text);
+}
+
+async function lineTestSignature(body, secret) {
+  if (!secret || !window.crypto?.subtle) return "";
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  return btoa(String.fromCharCode(...new Uint8Array(signature)));
+}
+
+async function testLineWebhook() {
+  const result = $("#lineTestResult");
+  if (isGithubPagesHost()) {
+    result.textContent = "GitHub Pages รับ webhook ไม่ได้ ต้องทดสอบกับ backend ที่รัน server.py บน public HTTPS หรือ localhost";
+    return;
+  }
+  const body = JSON.stringify({ destination: "local-test", events: [] });
+  const secret = $("#lineChannelSecretInput")?.value.trim() || "";
+  const headers = { "Content-Type": "application/json" };
+  const signature = await lineTestSignature(body, secret);
+  if (signature) headers["X-Line-Signature"] = signature;
+  result.textContent = "กำลังทดสอบ...";
+  try {
+    const response = await fetch(LINE_WEBHOOK_PATH, { method: "POST", headers, body });
+    const text = await response.text();
+    result.textContent = `HTTP ${response.status}: ${text}`;
+    await refreshLineStatus();
+  } catch (error) {
+    result.textContent = `ทดสอบไม่สำเร็จ: ${error.message}`;
+  }
+}
+
 function renderAll() {
   document.body.dataset.currentView = currentView;
   renderStaticCopy();
@@ -1920,6 +2072,7 @@ function renderAll() {
   renderMembers();
   renderSettlements();
   renderHistory();
+  renderLineWebhookPage();
   renderTimeExample();
   renderParticipantEditor(getEditingExpense());
   renderIcons();
@@ -2132,6 +2285,11 @@ function bindEvents() {
     const viewSlipButton = event.target.closest("[data-view-slip]");
     const cancelTransferButton = event.target.closest("[data-cancel-transfer]");
     const copyShareLinkButton = event.target.closest("[data-copy-share-link]");
+    const copyLineWebhookButton = event.target.closest("#copyLineWebhookUrlBtn");
+    const copyLineEnvButton = event.target.closest("#copyLineEnvBtn");
+    const copyLineCurlButton = event.target.closest("#copyLineCurlBtn");
+    const refreshLineButton = event.target.closest("#refreshLineStatusBtn");
+    const testLineButton = event.target.closest("#testLineWebhookBtn");
 
     if (event.target.closest("#addTripBtn")) {
       $("#newTripNameInput").focus();
@@ -2155,6 +2313,11 @@ function bindEvents() {
     if (viewSlipButton) showSlipDetail(viewSlipButton.dataset.viewSlip);
     if (cancelTransferButton) cancelTransfer(cancelTransferButton.dataset.cancelTransfer);
     if (copyShareLinkButton) copySettlementShareLink();
+    if (copyLineWebhookButton) copyLineWebhookUrl();
+    if (copyLineEnvButton) copyLineEnvCommand();
+    if (copyLineCurlButton) copyLineCurlCommand();
+    if (refreshLineButton) refreshLineStatus();
+    if (testLineButton) testLineWebhook();
     if (removeConditionButton) {
       const id = removeConditionButton.dataset.removeConditionItem;
       renderConditionItems(collectConditionItemsFromForm().filter((item) => item.id !== id));
@@ -2394,6 +2557,10 @@ if (sharedStateLoaded) {
 } else if (compressedSharedHashValue()) {
   loadCompressedSharedStateFromUrl().then((loaded) => {
     if (!loaded && !sharedLinkError) hydrateSharedState();
+  });
+
+  document.addEventListener("input", (event) => {
+    if (event.target.closest("#lineChannelSecretInput, #lineAccessTokenInput")) updateLineEnvCommand();
   });
 } else if (sharedLinkError) {
   showToast("\u0e25\u0e34\u0e07\u0e01\u0e4c\u0e41\u0e0a\u0e23\u0e4c\u0e44\u0e21\u0e48\u0e2a\u0e21\u0e1a\u0e39\u0e23\u0e13\u0e4c");
