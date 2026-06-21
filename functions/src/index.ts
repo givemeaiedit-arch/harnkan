@@ -201,6 +201,15 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       status: response.ok ? agentResult.status : "reply_failed",
       latencyMs: Date.now() - webhookStarted,
       errorCode: response.ok ? "" : `LINE_REPLY_${response.status}`,
+      model: agentResult.usage?.model,
+      inputTokens: agentResult.usage?.inputTokens || 0,
+      outputTokens: agentResult.usage?.outputTokens || 0,
+      totalTokens: agentResult.usage?.totalTokens || 0,
+      openAiCalls: agentResult.usage?.openAiCalls || 0,
+      estimatedUsd: agentResult.cost?.estimatedUsd || 0,
+      estimatedThb: agentResult.cost?.estimatedThb || 0,
+      lineReplyStatus: response.status,
+      lineReplyOk: response.ok,
     });
     console.info("LINE agent reply", {
       chatIdHash: hashId(target.chatId),

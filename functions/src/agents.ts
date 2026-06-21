@@ -1,8 +1,9 @@
-import type { AgentResult, ChatTarget, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense } from "./types";
+import type { AgentResult, ChatTarget, CostEstimate, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense, TokenUsage } from "./types";
 import { createSplitExpense, deleteUserMemories, saveMemory } from "./repository";
 
 const invocationPrefixes = ["@หารกัน", "/ai", "/ดูดวง", "/หาร", "/วิเคราะห์", "/จำ", "/ลืม"];
 const harnkanUrl = "https://harnkan-givemeai-gpt-hub.web.app";
+const defaultUsdToThb = Number(process.env.USD_TO_THB_RATE || 32.9);
 
 type OpenAiMessage = {
   role: "system" | "user" | "assistant";
@@ -16,6 +17,13 @@ type MemoryExtraction = {
     text: string;
     confidence: number;
   }>;
+};
+
+type CostTracker = {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  openAiCalls: number;
 };
 
 export function parseCommand(rawText: string): ParsedCommand {
@@ -54,29 +62,31 @@ export async function runAgentWorkflow(input: {
 }): Promise<AgentResult> {
   const { command, context, target, openaiApiKey, model } = input;
   const started = Date.now();
+  const tracker: CostTracker = { model, inputTokens: 0, outputTokens: 0, openAiCalls: 0 };
 
   try {
     let result: AgentResult;
     if (command.route === "memory") {
-      result = await runMemoryAgent(command.text, context, target, openaiApiKey, model);
+      result = await runMemoryAgent(command.text, context, target, openaiApiKey, model, tracker);
     } else if (command.route === "memory_show") {
       result = runMemoryShowAgent(context);
     } else if (command.route === "memory_delete") {
       result = await runMemoryDeleteAgent(command.text, target);
     } else if (command.route === "split") {
-      result = await runSplitBillAgent(command.text, context, target, openaiApiKey, model);
+      result = await runSplitBillAgent(command.text, context, target, openaiApiKey, model, tracker);
     } else if (command.route === "horoscope") {
-      result = await runHoroscopeAgent(command.text, context, openaiApiKey, model);
+      result = await runHoroscopeAgent(command.text, context, openaiApiKey, model, tracker);
     } else if (command.route === "speech") {
-      result = await runSpeechAnalysisAgent(command.text, context, openaiApiKey, model);
+      result = await runSpeechAnalysisAgent(command.text, context, openaiApiKey, model, tracker);
     } else {
-      result = await runGeneralChatAgent(command.text, context, openaiApiKey, model);
+      result = await runGeneralChatAgent(command.text, context, openaiApiKey, model, tracker);
     }
 
     if (!["memory", "memory_show", "memory_delete"].includes(command.route)) {
-      await saveAutoMemories(command.text, context, target, openaiApiKey, model);
+      await saveAutoMemories(command.text, context, target, openaiApiKey, model, tracker);
     }
-    return { ...result, reply: safetyReview(result.reply) };
+    const usage = usageFromTracker(tracker);
+    return { ...result, reply: safetyReview(result.reply), usage, cost: estimateCost(usage) };
   } catch (error) {
     console.error("Agent workflow failed", {
       route: command.route,
@@ -88,11 +98,13 @@ export async function runAgentWorkflow(input: {
       route: command.route,
       agent: "SafetyReviewAgent",
       status: "error",
+      usage: usageFromTracker(tracker),
+      cost: estimateCost(usageFromTracker(tracker)),
     };
   }
 }
 
-async function runGeneralChatAgent(text: string, context: GroupContext, openaiApiKey: string, model: string): Promise<AgentResult> {
+async function runGeneralChatAgent(text: string, context: GroupContext, openaiApiKey: string, model: string, tracker: CostTracker): Promise<AgentResult> {
   const reply = await createTextCompletion(openaiApiKey, model, [
     {
       role: "system",
@@ -103,7 +115,7 @@ async function runGeneralChatAgent(text: string, context: GroupContext, openaiAp
       role: "user",
       content: `ผู้พูด: ${context.currentUser.displayName}\nความจำที่เกี่ยวข้อง:\n${memorySummary(context)}\n\nข้อความ: ${text}`,
     },
-  ]);
+  ], tracker);
 
   return {
     reply: reply || "เรียกผมด้วย /หาร /ดูดวง /วิเคราะห์ หรือ /จำ ได้เลยครับ",
@@ -119,6 +131,7 @@ async function runMemoryAgent(
   target: ChatTarget,
   openaiApiKey: string,
   model: string,
+  tracker: CostTracker,
 ): Promise<AgentResult> {
   if (isSensitiveText(text)) {
     return {
@@ -129,7 +142,7 @@ async function runMemoryAgent(
     };
   }
 
-  const memories = await extractMemories(text, context, openaiApiKey, model);
+  const memories = await extractMemories(text, context, openaiApiKey, model, tracker);
   const usable = memories.length
     ? memories
     : [{ ownerUserId: target.userId, category: "note" as const, text, confidence: 0.7 }];
@@ -178,8 +191,9 @@ async function runSplitBillAgent(
   target: ChatTarget,
   openaiApiKey: string,
   model: string,
+  tracker: CostTracker,
 ): Promise<AgentResult> {
-  const parsed = await parseSplitExpense(text, context, openaiApiKey, model);
+  const parsed = await parseSplitExpense(text, context, openaiApiKey, model, tracker);
   const sessionId = await createSplitExpense(target, parsed);
   if (parsed.needsMoreInfo) {
     return {
@@ -208,7 +222,7 @@ async function runSplitBillAgent(
   };
 }
 
-async function runHoroscopeAgent(text: string, context: GroupContext, openaiApiKey: string, model: string): Promise<AgentResult> {
+async function runHoroscopeAgent(text: string, context: GroupContext, openaiApiKey: string, model: string, tracker: CostTracker): Promise<AgentResult> {
   const reply = await createTextCompletion(openaiApiKey, model, [
     {
       role: "system",
@@ -219,7 +233,7 @@ async function runHoroscopeAgent(text: string, context: GroupContext, openaiApiK
       role: "user",
       content: `ผู้พูด: ${context.currentUser.displayName}\nความจำ:\n${memorySummary(context)}\n\nคำขอ: ${text}`,
     },
-  ]);
+  ], tracker);
   return {
     reply: reply || "ดูดวงแบบสนุก ๆ วันนี้เหมาะกับการคุยให้ชัด เคลียร์ยอดให้ไว และอย่าเพิ่งรีบตัดสินใจเรื่องใหญ่ครับ",
     route: "horoscope",
@@ -228,7 +242,7 @@ async function runHoroscopeAgent(text: string, context: GroupContext, openaiApiK
   };
 }
 
-async function runSpeechAnalysisAgent(text: string, context: GroupContext, openaiApiKey: string, model: string): Promise<AgentResult> {
+async function runSpeechAnalysisAgent(text: string, context: GroupContext, openaiApiKey: string, model: string, tracker: CostTracker): Promise<AgentResult> {
   const reply = await createTextCompletion(openaiApiKey, model, [
     {
       role: "system",
@@ -239,7 +253,7 @@ async function runSpeechAnalysisAgent(text: string, context: GroupContext, opena
       role: "user",
       content: `ผู้พูด: ${context.currentUser.displayName}\nข้อความให้วิเคราะห์: ${text}`,
     },
-  ]);
+  ], tracker);
   return {
     reply:
       reply ||
@@ -256,9 +270,10 @@ async function saveAutoMemories(
   target: ChatTarget,
   openaiApiKey: string,
   model: string,
+  tracker: CostTracker,
 ): Promise<void> {
   if (!text || isSensitiveText(text)) return;
-  const memories = await extractMemories(text, context, openaiApiKey, model);
+  const memories = await extractMemories(text, context, openaiApiKey, model, tracker);
   const strongMemories = memories.filter((memory) => memory.confidence >= 0.72);
   if (!strongMemories.length) return;
   await Promise.all(strongMemories.slice(0, 3).map((memory) => saveMemory(target, memory)));
@@ -269,6 +284,7 @@ async function extractMemories(
   context: GroupContext,
   openaiApiKey: string,
   model: string,
+  tracker: CostTracker,
 ): Promise<Array<Omit<MemberMemory, "id" | "createdAt">>> {
   if (!openaiApiKey || !text.trim()) return [];
   const schema = {
@@ -304,7 +320,7 @@ async function extractMemories(
       role: "user",
       content: `สมาชิกที่รู้จัก: ${context.members.map((member) => member.displayName).join(", ")}\nผู้พูด: ${context.currentUser.displayName}\nข้อความ: ${text}`,
     },
-  ]);
+  ], tracker);
 
   return (result?.memories || [])
     .filter((memory) => memory.text && !isSensitiveText(memory.text))
@@ -321,6 +337,7 @@ async function parseSplitExpense(
   context: GroupContext,
   openaiApiKey: string,
   model: string,
+  tracker: CostTracker,
 ): Promise<ParsedSplitExpense> {
   const schema = {
     type: "object",
@@ -348,7 +365,7 @@ async function parseSplitExpense(
       role: "user",
       content: `สมาชิกที่รู้จัก: ${context.members.map((member) => member.displayName).join(", ")}\nข้อความ: ${text}`,
     },
-  ]);
+  ], tracker);
 
   return {
     title: result?.title || "ค่าใช้จ่าย",
@@ -362,7 +379,7 @@ async function parseSplitExpense(
   };
 }
 
-async function createTextCompletion(openaiApiKey: string, model: string, messages: OpenAiMessage[]): Promise<string> {
+async function createTextCompletion(openaiApiKey: string, model: string, messages: OpenAiMessage[], tracker: CostTracker): Promise<string> {
   if (!openaiApiKey) return "";
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -378,11 +395,12 @@ async function createTextCompletion(openaiApiKey: string, model: string, message
     }),
   });
   if (!response.ok) throw new Error(`OPENAI_TEXT_${response.status}`);
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: OpenAiUsage };
+  recordUsage(tracker, data.usage);
   return data.choices?.[0]?.message?.content?.trim() || "";
 }
 
-async function createJsonCompletion<T>(openaiApiKey: string, model: string, schema: Record<string, unknown>, messages: OpenAiMessage[]): Promise<T | null> {
+async function createJsonCompletion<T>(openaiApiKey: string, model: string, schema: Record<string, unknown>, messages: OpenAiMessage[], tracker: CostTracker): Promise<T | null> {
   if (!openaiApiKey) return null;
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -406,7 +424,8 @@ async function createJsonCompletion<T>(openaiApiKey: string, model: string, sche
     }),
   });
   if (!response.ok) throw new Error(`OPENAI_JSON_${response.status}`);
-  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }>; usage?: OpenAiUsage };
+  recordUsage(tracker, data.usage);
   const content = data.choices?.[0]?.message?.content;
   if (!content) return null;
   return JSON.parse(content) as T;
@@ -441,4 +460,47 @@ function formatBaht(amount: number): string {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
+}
+
+type OpenAiUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+};
+
+function recordUsage(tracker: CostTracker, usage: OpenAiUsage | undefined): void {
+  tracker.openAiCalls += 1;
+  tracker.inputTokens += Number(usage?.prompt_tokens || 0);
+  tracker.outputTokens += Number(usage?.completion_tokens || 0);
+}
+
+function usageFromTracker(tracker: CostTracker): TokenUsage {
+  return {
+    model: tracker.model,
+    inputTokens: tracker.inputTokens,
+    outputTokens: tracker.outputTokens,
+    totalTokens: tracker.inputTokens + tracker.outputTokens,
+    openAiCalls: tracker.openAiCalls,
+  };
+}
+
+function estimateCost(usage: TokenUsage): CostEstimate {
+  const rates = ratesForModel(usage.model);
+  const estimatedUsd =
+    (usage.inputTokens / 1_000_000) * rates.inputUsdPerMillion +
+    (usage.outputTokens / 1_000_000) * rates.outputUsdPerMillion;
+  return {
+    model: usage.model,
+    inputUsdPerMillion: rates.inputUsdPerMillion,
+    outputUsdPerMillion: rates.outputUsdPerMillion,
+    usdToThb: defaultUsdToThb,
+    estimatedUsd,
+    estimatedThb: estimatedUsd * defaultUsdToThb,
+  };
+}
+
+function ratesForModel(model: string): { inputUsdPerMillion: number; outputUsdPerMillion: number } {
+  const normalized = model.toLowerCase();
+  if (normalized.includes("gpt-4o-mini")) return { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 };
+  return { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 };
 }

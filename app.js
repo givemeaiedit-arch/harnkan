@@ -1995,15 +1995,54 @@ async function refreshLineEvents() {
 
 function lineEventMarkup(entry) {
   const first = entry.events?.[0] || {};
+  const statusClass = entry.status === "ok" || entry.lineReplyOk ? "ok" : String(entry.status || "").includes("ignored") ? "idle" : "error";
+  const directionText = entry.lineReplyStatus
+    ? `รับแล้ว / ส่งกลับ ${entry.lineReplyStatus}`
+    : String(entry.status || "").includes("ignored")
+      ? "รับแล้ว / ไม่ตอบ"
+      : "รับแล้ว";
+  const tokenText = `${formatInteger(entry.inputTokens || 0)} in / ${formatInteger(entry.outputTokens || 0)} out`;
+  const costText = `${formatUsd(entry.estimatedUsd || 0)} • ${formatThb(entry.estimatedThb || 0)}`;
   return `
-    <div class="line-event-row">
-      <div>
-        <b>${escapeHtml(first.type || "webhook")}${first.messageType ? ` / ${escapeHtml(first.messageType)}` : ""}</b>
-        <span>${escapeHtml(first.text || "ไม่มีข้อความ")} ${entry.eventCount ? `(${entry.eventCount} event)` : ""}</span>
+    <div class="line-event-row line-event-row--${statusClass}">
+      <div class="line-event-main">
+        <div class="line-event-title">
+          <b>${escapeHtml(first.type || entry.eventType || "webhook")}${first.messageType ? ` / ${escapeHtml(first.messageType)}` : ""}</b>
+          <span class="line-event-status">${escapeHtml(directionText)}</span>
+        </div>
+        <span>${escapeHtml(first.text || entry.status || "ไม่มีข้อความ")} ${entry.eventCount ? `(${entry.eventCount} event)` : ""}</span>
+        <div class="line-event-meta">
+          <small>Agent: ${escapeHtml(entry.agent || "-")}</small>
+          <small>Route: ${escapeHtml(entry.route || "-")}</small>
+          <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
+          ${entry.errorCode ? `<small class="line-event-error">Error: ${escapeHtml(entry.errorCode)}</small>` : ""}
+        </div>
+        <div class="line-event-cost">
+          <span>Model: ${escapeHtml(entry.model || "-")}</span>
+          <span>Calls: ${formatInteger(entry.openAiCalls || 0)}</span>
+          <span>Tokens: ${tokenText}</span>
+          <strong>${costText}</strong>
+        </div>
       </div>
       <small>${escapeHtml(entry.receivedAt || "")}</small>
     </div>
   `;
+}
+
+function formatInteger(value) {
+  return Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
+}
+
+function formatUsd(value) {
+  const amount = Number(value || 0);
+  if (!amount) return "$0.000000";
+  return `$${amount.toFixed(6)}`;
+}
+
+function formatThb(value) {
+  const amount = Number(value || 0);
+  if (!amount) return "฿0.0000";
+  return `฿${amount.toFixed(4)}`;
 }
 
 function updateLineEnvCommand() {

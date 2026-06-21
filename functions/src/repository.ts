@@ -168,6 +168,15 @@ export async function recentLineEvents(limit = 30): Promise<Record<string, unkno
       status: data.status || "",
       latencyMs: data.latencyMs || 0,
       errorCode: data.errorCode || "",
+      model: data.model || "",
+      inputTokens: data.inputTokens || 0,
+      outputTokens: data.outputTokens || 0,
+      totalTokens: data.totalTokens || 0,
+      openAiCalls: data.openAiCalls || 0,
+      estimatedUsd: data.estimatedUsd || 0,
+      estimatedThb: data.estimatedThb || 0,
+      lineReplyStatus: data.lineReplyStatus || 0,
+      lineReplyOk: Boolean(data.lineReplyOk),
       receivedAt: data.receivedAt?.toDate?.()?.toISOString?.() || "",
     };
   });

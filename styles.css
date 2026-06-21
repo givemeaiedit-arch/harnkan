@@ -924,10 +924,76 @@ button {
   background: #fff;
 }
 
+.line-event-row--ok {
+  border-color: rgba(16, 185, 129, 0.34);
+  background: #f0fdf7;
+}
+
+.line-event-row--idle {
+  border-color: rgba(100, 116, 139, 0.24);
+  background: #f8fafc;
+}
+
+.line-event-row--error {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: #fff7f7;
+}
+
 .line-event-row div {
   display: grid;
   gap: 3px;
   min-width: 0;
+}
+
+.line-event-main {
+  gap: 8px;
+}
+
+.line-event-title {
+  display: flex !important;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.line-event-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(23, 104, 213, 0.08);
+  color: var(--blue) !important;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.line-event-meta,
+.line-event-cost {
+  display: flex !important;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.line-event-meta small,
+.line-event-cost span,
+.line-event-cost strong {
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.line-event-cost strong {
+  color: #047857;
+}
+
+.line-event-error {
+  color: var(--red) !important;
 }
 
 .line-event-row span,

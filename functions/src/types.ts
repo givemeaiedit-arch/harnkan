@@ -74,6 +74,25 @@ export type AgentResult = {
   status: "ok" | "needs_input" | "blocked" | "error";
   savedMemoryCount?: number;
   splitSessionId?: string;
+  usage?: TokenUsage;
+  cost?: CostEstimate;
+};
+
+export type TokenUsage = {
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  openAiCalls: number;
+};
+
+export type CostEstimate = {
+  model: string;
+  inputUsdPerMillion: number;
+  outputUsdPerMillion: number;
+  usdToThb: number;
+  estimatedUsd: number;
+  estimatedThb: number;
 };
 
 export type ParsedSplitExpense = {
@@ -97,4 +116,13 @@ export type AuditEvent = {
   status: string;
   latencyMs?: number;
   errorCode?: string;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  openAiCalls?: number;
+  estimatedUsd?: number;
+  estimatedThb?: number;
+  lineReplyStatus?: number;
+  lineReplyOk?: boolean;
 };
