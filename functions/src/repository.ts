@@ -248,6 +248,82 @@ export async function aiUsageSummary(limit = 1000): Promise<Record<string, unkno
   return summary;
 }
 
+export async function lineDashboardAnalytics(limit = 5000): Promise<Record<string, unknown>> {
+  const snap = await db.collection("lineEventSummaries").orderBy("receivedAt", "desc").limit(limit).get();
+  const rows = snap.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      chatId: String(data.chatId || ""),
+      chatIdHash: String(data.chatIdHash || ""),
+      userIdHash: String(data.userIdHash || ""),
+      eventType: String(data.eventType || ""),
+      status: String(data.status || ""),
+      lineReplyOk: Boolean(data.lineReplyOk),
+      estimatedUsd: Number(data.estimatedUsd || 0),
+      estimatedThb: Number(data.estimatedThb || 0),
+      openAiCalls: Number(data.openAiCalls || 0),
+      totalTokens: Number(data.totalTokens || 0),
+      receivedAt: data.receivedAt?.toDate?.() || null,
+    };
+  }).filter((row) => row.receivedAt);
+
+  const primaryChatId = mostActiveChatId(rows);
+  const memberNames = primaryChatId ? await memberNameMap(primaryChatId) : new Map<string, string>();
+  const primaryRows = rows.filter((row) => !primaryChatId || row.chatId === primaryChatId);
+  const messageRows = primaryRows.filter((row) => row.eventType === "message");
+  const repliedRows = messageRows.filter((row) => row.lineReplyOk);
+  const spontaneousRows = messageRows.filter((row) => row.status === "spontaneous_reply" && row.lineReplyOk);
+  const activeDays = distinctBangkokDays(messageRows);
+  const todayKey = bangkokDateKey(new Date());
+  const todayRows = messageRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
+  const todayReplies = repliedRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
+  const todaySpontaneous = spontaneousRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
+  const hourlyToday = buildHourlyBuckets(todayRows, todayReplies, todaySpontaneous);
+  const speakerStats = buildSpeakerStats(messageRows, memberNames);
+  const totalCostUsd = primaryRows.reduce((sum, row) => sum + row.estimatedUsd, 0);
+  const totalCostThb = primaryRows.reduce((sum, row) => sum + row.estimatedThb, 0);
+  const totalTokens = primaryRows.reduce((sum, row) => sum + row.totalTokens, 0);
+  const totalCalls = primaryRows.reduce((sum, row) => sum + row.openAiCalls, 0);
+  const dayCount = Math.max(activeDays.length, 1);
+
+  return {
+    primaryChatIdHash: primaryRows[0]?.chatIdHash || "",
+    totals: {
+      receivedMessages: messageRows.length,
+      repliedMessages: repliedRows.length,
+      spontaneousReplies: spontaneousRows.length,
+      totalAiCalls: totalCalls,
+      totalTokens,
+      totalCostUsd,
+      totalCostThb,
+      averageCostUsdPerDay: totalCostUsd / dayCount,
+      averageCostThbPerDay: totalCostThb / dayCount,
+      averageReceivedPerDay: messageRows.length / dayCount,
+      averageRepliesPerDay: repliedRows.length / dayCount,
+      totalDays: activeDays.length,
+    },
+    today: {
+      receivedMessages: todayRows.length,
+      repliedMessages: todayReplies.length,
+      spontaneousReplies: todaySpontaneous.length,
+      receivedTimes: todayRows.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
+      repliedTimes: todayReplies.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
+      spontaneousTimes: todaySpontaneous.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
+      firstReceivedAt: todayRows[0]?.receivedAt?.toISOString?.() || "",
+      lastReceivedAt: todayRows[todayRows.length - 1]?.receivedAt?.toISOString?.() || "",
+    },
+    hourlyToday,
+    speakers: {
+      top: speakerStats.slice(0, 8),
+      bottom: [...speakerStats].reverse().slice(0, 6).reverse(),
+    },
+    dateRange: {
+      firstSeenAt: messageRows[messageRows.length - 1]?.receivedAt?.toISOString?.() || "",
+      lastSeenAt: messageRows[0]?.receivedAt?.toISOString?.() || "",
+    },
+  };
+}
+
 export async function recentPublicMemories(limit = 30): Promise<Record<string, unknown>[]> {
   const eventsSnap = await db.collection("lineEventSummaries").orderBy("receivedAt", "desc").limit(100).get();
   const chatIds = eventsSnap.docs
@@ -275,6 +351,21 @@ export async function recentPublicMemories(limit = 30): Promise<Record<string, u
   );
 
   return memories.flat().sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || ""))).slice(0, limit);
+}
+
+export async function detailedPublicMemories(limit = 120): Promise<Record<string, unknown>> {
+  const memories = await recentPublicMemories(limit);
+  const byCategory = new Map<string, number>();
+  memories.forEach((memory) => {
+    const category = String(memory.category || "note");
+    byCategory.set(category, (byCategory.get(category) || 0) + 1);
+  });
+  return {
+    items: memories,
+    categories: [...byCategory.entries()]
+      .map(([category, count]) => ({ category, count }))
+      .sort((left, right) => right.count - left.count),
+  };
 }
 
 export async function getAiRuntimeConfig(defaultModel: string, modelOptions: Array<{ label: string; value: string }>): Promise<AiRuntimeConfig> {
@@ -331,4 +422,85 @@ function memoryFromDoc(id: string, data: MemoryDoc): MemberMemory {
 function safeDisplayName(displayName: string | undefined, userId: string): string {
   const clean = String(displayName || "").trim();
   return clean || `LINE-${hashId(userId)}`;
+}
+
+function mostActiveChatId(rows: Array<{ chatId: string }>): string {
+  const counts = new Map<string, number>();
+  rows.forEach((row) => {
+    if (!row.chatId || row.chatId === "invalid-signature") return;
+    counts.set(row.chatId, (counts.get(row.chatId) || 0) + 1);
+  });
+  return [...counts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] || "";
+}
+
+async function memberNameMap(chatId: string): Promise<Map<string, string>> {
+  const snap = await db.collection("lineGroups").doc(chatId).collection("members").limit(100).get();
+  const map = new Map<string, string>();
+  snap.docs.forEach((doc) => {
+    const userId = String(doc.get("userId") || doc.id);
+    map.set(hashId(userId), String(doc.get("displayName") || `LINE-${hashId(userId)}`));
+  });
+  return map;
+}
+
+function bangkokDateKey(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value || "0000";
+  const month = parts.find((part) => part.type === "month")?.value || "00";
+  const day = parts.find((part) => part.type === "day")?.value || "00";
+  return `${year}-${month}-${day}`;
+}
+
+function bangkokHour(date: Date): number {
+  const value = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Bangkok",
+    hour: "2-digit",
+    hour12: false,
+  }).format(date);
+  return Number(value);
+}
+
+function distinctBangkokDays(rows: Array<{ receivedAt: Date | null }>): string[] {
+  return [...new Set(rows.map((row) => bangkokDateKey(row.receivedAt as Date)))];
+}
+
+function buildHourlyBuckets(
+  receivedRows: Array<{ receivedAt: Date | null }>,
+  repliedRows: Array<{ receivedAt: Date | null }>,
+  spontaneousRows: Array<{ receivedAt: Date | null }>,
+): Array<Record<string, number | string>> {
+  const buckets = Array.from({ length: 24 }, (_, hour) => ({ hour, label: `${String(hour).padStart(2, "0")}:00`, received: 0, replied: 0, spontaneous: 0 }));
+  receivedRows.forEach((row) => {
+    buckets[bangkokHour(row.receivedAt as Date)].received += 1;
+  });
+  repliedRows.forEach((row) => {
+    buckets[bangkokHour(row.receivedAt as Date)].replied += 1;
+  });
+  spontaneousRows.forEach((row) => {
+    buckets[bangkokHour(row.receivedAt as Date)].spontaneous += 1;
+  });
+  return buckets;
+}
+
+function buildSpeakerStats(
+  rows: Array<{ userIdHash: string; receivedAt: Date | null }>,
+  memberNames: Map<string, string>,
+): Array<Record<string, unknown>> {
+  const counts = new Map<string, number>();
+  rows.forEach((row) => {
+    if (!row.userIdHash) return;
+    counts.set(row.userIdHash, (counts.get(row.userIdHash) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .map(([userIdHash, messageCount]) => ({
+      userIdHash,
+      displayName: memberNames.get(userIdHash) || `สมาชิก ${userIdHash.slice(0, 4)}`,
+      messageCount,
+    }))
+    .sort((left, right) => Number(right.messageCount) - Number(left.messageCount));
 }

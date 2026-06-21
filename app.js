@@ -1963,7 +1963,7 @@ function renderLineWebhookPage() {
   $("#lineConfigStatusLabel").textContent = "กำลังตรวจสอบ...";
   if (isGithubPagesHost()) {
     $("#lineConfigStatusLabel").textContent = "ต้อง deploy backend";
-    $("#lineEventsList").innerHTML = emptyState("GitHub Pages ไม่มี backend สำหรับรับ LINE webhook โดยตรง");
+    renderLineDashboardUnavailable("GitHub Pages ไม่มี backend สำหรับรับ LINE webhook โดยตรง");
     return;
   }
   refreshLineStatus();
@@ -2010,39 +2010,160 @@ async function refreshLineEvents() {
     const response = await fetch(LINE_EVENTS_URL, { cache: "no-store" });
     const data = await response.json();
     const events = Array.isArray(data.events) ? data.events : [];
-    renderLineAiSummary(data.usageSummary || {});
-    renderLineMemories(Array.isArray(data.memories) ? data.memories : []);
+    renderLineAiSummary(data.usageSummary || {}, data.analytics || {});
+    renderLineDashboard(data.analytics || {});
+    renderLineMemories(data.memoryDetails || { items: Array.isArray(data.memories) ? data.memories : [], categories: [] });
     list.innerHTML = events.length ? events.slice(0, 8).map(lineEventMarkup).join("") : emptyState("ยังไม่มี webhook event");
   } catch {
+    renderLineDashboardUnavailable("อ่าน dashboard ของวิมลไม่ได้");
     list.innerHTML = emptyState("อ่าน event ล่าสุดไม่ได้");
   }
 }
 
-function renderLineAiSummary(summary) {
+function renderLineAiSummary(summary, analytics = {}) {
   const cost = $("#lineAiTotalCostLabel");
   const usage = $("#lineAiUsageLabel");
-  if (cost) cost.textContent = `${formatUsd(summary.estimatedUsd || 0)} / ${formatThb(summary.estimatedThb || 0)}`;
+  const totals = analytics.totals || {};
+  const totalUsd = totals.totalCostUsd ?? summary.estimatedUsd ?? 0;
+  const totalThb = totals.totalCostThb ?? summary.estimatedThb ?? 0;
+  if (cost) cost.textContent = `${formatUsd(totalUsd)} / ${formatThb(totalThb)}`;
   if (usage) {
-    usage.textContent = `${formatInteger(summary.openAiCalls || 0)} calls • ${formatInteger(summary.totalTokens || 0)} tokens จาก ${formatInteger(summary.eventCount || 0)} event`;
+    usage.textContent = `${formatInteger(totals.totalAiCalls ?? summary.openAiCalls ?? 0)} calls • ${formatInteger(totals.totalTokens ?? summary.totalTokens ?? 0)} tokens จาก ${formatInteger(totals.receivedMessages ?? summary.eventCount ?? 0)} ข้อความ`;
   }
 }
 
-function renderLineMemories(memories) {
+function renderLineDashboard(analytics = {}) {
+  const totals = analytics.totals || {};
+  const today = analytics.today || {};
+  $("#lineTodayReceivedLabel").textContent = formatInteger(today.receivedMessages || 0);
+  $("#lineTodayRepliesLabel").textContent = formatInteger(today.repliedMessages || 0);
+  $("#lineTodaySpontaneousLabel").textContent = formatInteger(today.spontaneousReplies || 0);
+  $("#lineTodayReceivedTimes").textContent = summarizeLineTimes(today.receivedTimes, "ยังไม่มีข้อความวันนี้");
+  $("#lineTodayRepliesTimes").textContent = summarizeLineTimes(today.repliedTimes, "ยังไม่ได้ตอบวันนี้");
+  $("#lineTodaySpontaneousTimes").textContent = summarizeLineTimes(today.spontaneousTimes, "วันนี้ยังไม่ตอบเอง");
+  $("#lineAverageCostPerDayLabel").textContent = formatUsd(totals.averageCostUsdPerDay || 0);
+  $("#lineAverageCostPerDayThbLabel").textContent = formatThb(totals.averageCostThbPerDay || 0);
+  renderLineHourlyChart(Array.isArray(analytics.hourlyToday) ? analytics.hourlyToday : []);
+  renderLineSummaryMetrics(totals, analytics.dateRange || {});
+  renderLineSpeakers(analytics.speakers || {});
+}
+
+function renderLineSummaryMetrics(totals = {}, dateRange = {}) {
+  const target = $("#lineSummaryMetrics");
+  if (!target) return;
+  const items = [
+    ["ข้อความรับรวมทั้งหมด", formatInteger(totals.receivedMessages || 0)],
+    ["ข้อความตอบรวมทั้งหมด", formatInteger(totals.repliedMessages || 0)],
+    ["ตอบเองแบบไม่มีคนเรียก", formatInteger(totals.spontaneousReplies || 0)],
+    ["เฉลี่ยรับต่อวัน", formatDecimal(totals.averageReceivedPerDay || 0, 1)],
+    ["เฉลี่ยตอบต่อวัน", formatDecimal(totals.averageRepliesPerDay || 0, 1)],
+    ["จำนวนวันมีข้อมูล", `${formatInteger(totals.totalDays || 0)} วัน`],
+    ["ค่าใช้จ่ายรวมทั้งหมด", `${formatUsd(totals.totalCostUsd || 0)} / ${formatThb(totals.totalCostThb || 0)}`],
+    ["ช่วงข้อมูล", summarizeDateRange(dateRange.firstSeenAt, dateRange.lastSeenAt)],
+  ];
+  target.innerHTML = items.map(([label, value]) => `
+    <div class="line-summary-item">
+      <span>${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `).join("");
+}
+
+function renderLineHourlyChart(hourly = []) {
+  const target = $("#lineHourlyChart");
+  if (!target) return;
+  if (!hourly.length) {
+    target.innerHTML = emptyState("วันนี้ยังไม่มีข้อมูลรายชั่วโมง");
+    return;
+  }
+  const maxValue = Math.max(...hourly.map((item) => Math.max(Number(item.received || 0), Number(item.replied || 0), Number(item.spontaneous || 0))), 1);
+  target.innerHTML = hourly.map((item) => {
+    const received = Number(item.received || 0);
+    const replied = Number(item.replied || 0);
+    const spontaneous = Number(item.spontaneous || 0);
+    const total = received + replied + spontaneous;
+    return `
+      <div class="line-hour-bar" title="${escapeHtml(`${item.label} • รับ ${received} • ตอบ ${replied} • ตอบเอง ${spontaneous}`)}">
+        <div class="line-hour-total">${escapeHtml(String(total))}</div>
+        <div class="line-hour-bars">
+          <span class="line-hour-col line-hour-col--received" style="height:${Math.max((received / maxValue) * 160, received ? 8 : 4)}px"></span>
+          <span class="line-hour-col line-hour-col--replied" style="height:${Math.max((replied / maxValue) * 160, replied ? 8 : 4)}px"></span>
+          <span class="line-hour-col line-hour-col--spontaneous" style="height:${Math.max((spontaneous / maxValue) * 160, spontaneous ? 8 : 4)}px"></span>
+        </div>
+        <div class="line-hour-label">${escapeHtml(item.label || "-")}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderLineSpeakers(speakers = {}) {
+  const top = $("#lineTopSpeakers");
+  const bottom = $("#lineBottomSpeakers");
+  if (top) {
+    const topRows = Array.isArray(speakers.top) ? speakers.top : [];
+    top.innerHTML = topRows.length ? topRows.map((speaker, index) => lineSpeakerMarkup(speaker, index + 1, "มาก")).join("") : emptyState("ยังไม่มีสถิติผู้พูด");
+  }
+  if (bottom) {
+    const bottomRows = Array.isArray(speakers.bottom) ? speakers.bottom : [];
+    bottom.innerHTML = bottomRows.length ? bottomRows.map((speaker, index) => lineSpeakerMarkup(speaker, index + 1, "น้อย")).join("") : emptyState("ยังไม่มีสถิติผู้พูด");
+  }
+}
+
+function lineSpeakerMarkup(speaker, rank, toneLabel) {
+  return `
+    <div class="line-rank-item">
+      <div class="line-rank-badge">${escapeHtml(String(rank))}</div>
+      <div>
+        <b>${escapeHtml(speaker.displayName || `สมาชิก ${speaker.userIdHash || "-"}`)}</b>
+        <span>${escapeHtml(toneLabel)} • ${escapeHtml(String(speaker.userIdHash || "").slice(0, 8))}</span>
+      </div>
+      <small>${formatInteger(speaker.messageCount || 0)} ข้อความ</small>
+    </div>
+  `;
+}
+
+function renderLineMemories(payload) {
   const list = $("#lineMemoryList");
+  const categories = $("#lineMemoryCategoryList");
+  const memories = Array.isArray(payload?.items) ? payload.items : Array.isArray(payload) ? payload : [];
+  const categoryRows = Array.isArray(payload?.categories) ? payload.categories : [];
+  if (categories) {
+    categories.innerHTML = categoryRows.length
+      ? categoryRows.map((item) => `<span class="line-memory-chip">${escapeHtml(item.category || "note")} <b>${formatInteger(item.count || 0)}</b></span>`).join("")
+      : `<span class="line-memory-chip">ยังไม่มีหมวดความจำ</span>`;
+  }
   if (!list) return;
   if (!memories.length) {
     list.innerHTML = emptyState("ยังไม่มีความจำที่บันทึกไว้");
     return;
   }
-  list.innerHTML = memories.slice(0, 12).map((memory) => `
-    <div class="line-memory-item">
-      <div>
+  list.innerHTML = memories.slice(0, 18).map((memory) => `
+    <div class="line-memory-item line-memory-item--detailed">
+      <div class="line-memory-main">
         <b>${escapeHtml(memory.text || "-")}</b>
-        <span>${escapeHtml(memory.category || "note")} • owner ${escapeHtml(memory.ownerUserIdHash || "-")}</span>
+        <div class="line-memory-tags">
+          <span class="line-memory-tag">${escapeHtml(memory.category || "note")}</span>
+          <span class="line-memory-tag">confidence ${formatDecimal(memory.confidence || 0, 2)}</span>
+        </div>
+        <div class="line-memory-owner">
+          <span>owner ${escapeHtml(memory.ownerUserIdHash || "-")}</span>
+          ${memory.chatIdHash ? `<span>group ${escapeHtml(memory.chatIdHash)}</span>` : ""}
+        </div>
       </div>
       <small>${escapeHtml(formatThaiDateTime(memory.createdAt))}</small>
     </div>
   `).join("");
+}
+
+function renderLineDashboardUnavailable(message) {
+  const fallback = emptyState(message);
+  const ids = ["lineHourlyChart", "lineSummaryMetrics", "lineTopSpeakers", "lineBottomSpeakers", "lineMemoryList", "lineEventsList"];
+  ids.forEach((id) => {
+    const node = $(`#${id}`);
+    if (node) node.innerHTML = fallback;
+  });
+  const categories = $("#lineMemoryCategoryList");
+  if (categories) categories.innerHTML = `<span class="line-memory-chip">ยังไม่มีข้อมูล</span>`;
 }
 
 function lineEventMarkup(entry) {
@@ -2140,8 +2261,27 @@ function formatThaiDateTime(value) {
   }).format(date);
 }
 
+function formatThaiTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("th-TH", {
+    timeZone: "Asia/Bangkok",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
 function formatInteger(value) {
   return Number(value || 0).toLocaleString("th-TH", { maximumFractionDigits: 0 });
+}
+
+function formatDecimal(value, digits = 1) {
+  return Number(value || 0).toLocaleString("th-TH", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
 }
 
 function formatUsd(value) {
@@ -2154,6 +2294,21 @@ function formatThb(value) {
   const amount = Number(value || 0);
   if (!amount) return "฿0.0000";
   return `฿${amount.toFixed(4)}`;
+}
+
+function summarizeLineTimes(times, emptyText) {
+  const values = (Array.isArray(times) ? times : []).map(formatThaiTime).filter(Boolean);
+  if (!values.length) return emptyText;
+  if (values.length === 1) return `เวลา ${values[0]}`;
+  if (values.length <= 4) return values.join(", ");
+  return `${values[0]} - ${values[values.length - 1]} • ${formatInteger(values.length)} ครั้ง`;
+}
+
+function summarizeDateRange(firstSeenAt, lastSeenAt) {
+  if (!firstSeenAt || !lastSeenAt) return "-";
+  const first = formatThaiDateTime(firstSeenAt);
+  const last = formatThaiDateTime(lastSeenAt);
+  return first === last ? first : `${first} ถึง ${last}`;
 }
 
 function updateLineEnvCommand() {

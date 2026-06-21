@@ -5,10 +5,12 @@ import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineS
 import {
   ensureLineIdentity,
   aiUsageSummary,
+  detailedPublicMemories,
   getAiRuntimeConfig,
   getGroupContext,
   groupMemoriesForAdmin,
   isReplyToKnownBotMessage,
+  lineDashboardAnalytics,
   recentGroupMessageContext,
   recentPublicMemories,
   recentLineEvents,
@@ -135,11 +137,20 @@ export const lineEvents = onRequest(
   },
   async (_req, res) => {
     try {
+      const [events, usageSummary, memories, memoryDetails, analytics] = await Promise.all([
+        recentLineEvents(),
+        aiUsageSummary(),
+        recentPublicMemories(),
+        detailedPublicMemories(),
+        lineDashboardAnalytics(),
+      ]);
       res.status(200).json({
         ok: true,
-        events: await recentLineEvents(),
-        usageSummary: await aiUsageSummary(),
-        memories: await recentPublicMemories(),
+        events,
+        usageSummary,
+        memories,
+        memoryDetails,
+        analytics,
       });
     } catch (error) {
       console.error("Read line events failed", { errorCode: errorName(error) });

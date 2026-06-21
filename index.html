@@ -357,46 +357,127 @@
                 </div>
               </article>
 
-              <article class="panel line-test-panel">
-                <div class="panel-title">
-                  <span class="soft-icon blue"><i data-lucide="terminal"></i></span>
-                  <h2>ทดสอบและดู event ล่าสุด</h2>
-                  <button class="text-action" id="refreshLineStatusBtn" type="button">รีเฟรช <i data-lucide="refresh-cw"></i></button>
-                </div>
-                <div class="line-test-actions">
-                  <button class="primary-button" id="testLineWebhookBtn" type="button"><i data-lucide="send"></i>ทดสอบ endpoint</button>
-                  <button class="secondary-button" id="copyLineCurlBtn" type="button"><i data-lucide="copy"></i>คัดลอก curl ทดสอบ</button>
-                </div>
-                <div class="line-ai-panel">
-                  <div class="line-ai-card">
-                    <span>Model AI</span>
-                    <div class="line-model-row">
-                      <select id="lineAiModelSelect" aria-label="เลือก Model AI">
-                        <option value="gpt-5.4-mini">GPT 5.4 mini</option>
-                        <option value="gpt-4.1-mini">GPT 4o1 mini</option>
-                      </select>
-                      <button class="secondary-button" id="saveLineAiModelBtn" type="button"><i data-lucide="save"></i>บันทึก</button>
+              <div class="line-dashboard-stack">
+                <article class="panel line-dashboard-panel">
+                  <div class="panel-title">
+                    <span class="soft-icon blue"><i data-lucide="layout-dashboard"></i></span>
+                    <h2>Dashboard AI วิมล</h2>
+                    <button class="text-action" id="refreshLineStatusBtn" type="button">รีเฟรช <i data-lucide="refresh-cw"></i></button>
+                  </div>
+
+                  <div class="line-dashboard-toolbar">
+                    <div class="line-test-actions">
+                      <button class="primary-button" id="testLineWebhookBtn" type="button"><i data-lucide="send"></i>ทดสอบ endpoint</button>
+                      <button class="secondary-button" id="copyLineCurlBtn" type="button"><i data-lucide="copy"></i>คัดลอก curl ทดสอบ</button>
                     </div>
-                    <small id="lineAiModelHelp">-</small>
-                  </div>
-                  <div class="line-ai-card">
-                    <span>ค่าใช้จ่าย AI รวม</span>
-                    <strong id="lineAiTotalCostLabel">$0.000000 / ฿0.0000</strong>
-                    <small id="lineAiUsageLabel">0 calls • 0 tokens</small>
-                  </div>
-                </div>
-                <div class="line-result" id="lineTestResult">ยังไม่ได้ทดสอบ</div>
-                <div class="line-memory-panel">
-                  <div class="section-head">
-                    <div>
-                      <b>ความจำของวิมล</b>
-                      <span>ข้อมูลที่บอทเก็บจากกลุ่มแบบเงียบ ๆ</span>
+                    <div class="line-ai-panel">
+                      <div class="line-ai-card">
+                        <span>Model AI</span>
+                        <div class="line-model-row">
+                          <select id="lineAiModelSelect" aria-label="เลือก Model AI">
+                            <option value="gpt-5.4-mini">GPT 5.4 mini</option>
+                            <option value="gpt-4.1-mini">GPT 4o1 mini</option>
+                          </select>
+                          <button class="secondary-button" id="saveLineAiModelBtn" type="button"><i data-lucide="save"></i>บันทึก</button>
+                        </div>
+                        <small id="lineAiModelHelp">-</small>
+                      </div>
+                      <div class="line-ai-card">
+                        <span>ค่าใช้จ่าย AI รวม</span>
+                        <strong id="lineAiTotalCostLabel">$0.000000 / ฿0.0000</strong>
+                        <small id="lineAiUsageLabel">0 calls • 0 tokens</small>
+                      </div>
                     </div>
                   </div>
-                  <div class="line-memory-list" id="lineMemoryList"></div>
-                </div>
-                <div class="line-events-list" id="lineEventsList"></div>
-              </article>
+
+                  <div class="line-result" id="lineTestResult">ยังไม่ได้ทดสอบ</div>
+
+                  <div class="line-overview-grid" id="lineOverviewGrid">
+                    <div class="line-metric-card line-metric-card--receive">
+                      <span>วันนี้รับข้อความ</span>
+                      <strong id="lineTodayReceivedLabel">0</strong>
+                      <small id="lineTodayReceivedTimes">-</small>
+                    </div>
+                    <div class="line-metric-card line-metric-card--reply">
+                      <span>วันนี้ตอบกลับ</span>
+                      <strong id="lineTodayRepliesLabel">0</strong>
+                      <small id="lineTodayRepliesTimes">-</small>
+                    </div>
+                    <div class="line-metric-card line-metric-card--spontaneous">
+                      <span>วันนี้ตอบเองไม่มีคนเรียก</span>
+                      <strong id="lineTodaySpontaneousLabel">0</strong>
+                      <small id="lineTodaySpontaneousTimes">-</small>
+                    </div>
+                    <div class="line-metric-card line-metric-card--cost">
+                      <span>ค่าใช้จ่ายเฉลี่ยต่อวัน</span>
+                      <strong id="lineAverageCostPerDayLabel">$0.000000</strong>
+                      <small id="lineAverageCostPerDayThbLabel">฿0.0000</small>
+                    </div>
+                  </div>
+
+                  <div class="line-dashboard-grid">
+                    <section class="line-analytics-card">
+                      <div class="line-card-head">
+                        <div>
+                          <b>การใช้งานรายชั่วโมงวันนี้</b>
+                          <span>ดูช่วงเวลาที่คุยกับวิมลหนาแน่นที่สุด</span>
+                        </div>
+                      </div>
+                      <div class="line-hourly-chart" id="lineHourlyChart"></div>
+                    </section>
+
+                    <section class="line-analytics-card">
+                      <div class="line-card-head">
+                        <div>
+                          <b>ภาพรวมสะสม</b>
+                          <span>สรุปข้อความ ค่าใช้จ่าย และอัตราการใช้งาน</span>
+                        </div>
+                      </div>
+                      <div class="line-summary-grid" id="lineSummaryMetrics"></div>
+                    </section>
+
+                    <section class="line-analytics-card">
+                      <div class="line-card-head">
+                        <div>
+                          <b>สมาชิกในกลุ่ม</b>
+                          <span>ใครพูดเยอะ ใครพูดน้อย และความเคลื่อนไหวล่าสุด</span>
+                        </div>
+                      </div>
+                      <div class="line-speaker-grid">
+                        <div>
+                          <h3>พูดเยอะสุด</h3>
+                          <div class="line-rank-list" id="lineTopSpeakers"></div>
+                        </div>
+                        <div>
+                          <h3>พูดน้อยสุด</h3>
+                          <div class="line-rank-list" id="lineBottomSpeakers"></div>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section class="line-analytics-card">
+                      <div class="line-card-head">
+                        <div>
+                          <b>Memory ของวิมล</b>
+                          <span>สิ่งที่บอทจำไว้เพื่อนำไปใช้คุยต่อในอนาคต</span>
+                        </div>
+                      </div>
+                      <div class="line-memory-meta">
+                        <div class="line-memory-categories" id="lineMemoryCategoryList"></div>
+                      </div>
+                      <div class="line-memory-list line-memory-list--detailed" id="lineMemoryList"></div>
+                    </section>
+                  </div>
+                </article>
+
+                <article class="panel line-events-panel">
+                  <div class="panel-title">
+                    <span class="soft-icon purple"><i data-lucide="terminal"></i></span>
+                    <h2>เหตุการณ์ล่าสุด</h2>
+                  </div>
+                  <div class="line-events-list" id="lineEventsList"></div>
+                </article>
+              </div>
             </div>
           </section>
         </main>
