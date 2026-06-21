@@ -1972,7 +1972,8 @@ async function refreshLineStatus() {
     const config = await configResponse.json();
     const secretText = config.channelSecretConfigured ? "Secret พร้อม" : "ยังไม่ตั้ง Secret";
     const tokenText = config.channelAccessTokenConfigured ? "Token พร้อม" : "ยังไม่ตั้ง Token";
-    $("#lineConfigStatusLabel").textContent = `${secretText} / ${tokenText}`;
+    const openaiText = config.openaiApiKeyConfigured ? "OpenAI พร้อม" : config.aiReplyEnabled ? "ยังไม่ตั้ง OpenAI" : "";
+    $("#lineConfigStatusLabel").textContent = [secretText, tokenText, openaiText].filter(Boolean).join(" / ");
   } catch {
     $("#lineConfigStatusLabel").textContent = "เชื่อม server ไม่ได้";
   }
@@ -2025,6 +2026,34 @@ async function copyLineCurlCommand() {
   const text = lineCurlCommand();
   if (await copyText(text)) showToast("คัดลอก curl ทดสอบแล้ว");
   else showCopyFallback(text);
+}
+
+async function saveLineConfigToServer() {
+  const secret = $("#lineChannelSecretInput")?.value.trim() || "";
+  const token = $("#lineAccessTokenInput")?.value.trim() || "";
+  const result = $("#lineTestResult");
+  if (isGithubPagesHost()) {
+    result.textContent = "GitHub Pages บันทึก token ลง server ไม่ได้ ต้องเปิดจาก backend ที่รัน server.py";
+    return;
+  }
+  if (!secret || !token) {
+    showToast("กรุณาใส่ Channel Secret และ Channel Access Token ก่อน");
+    return;
+  }
+  try {
+    const response = await fetch(LINE_CONFIG_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channelSecret: secret, channelAccessToken: token }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    showToast("บันทึก LINE config ลง server แล้ว");
+    result.textContent = "บันทึก LINE config แล้ว พร้อมทดสอบ webhook";
+    await refreshLineStatus();
+  } catch (error) {
+    result.textContent = `บันทึก config ไม่สำเร็จ: ${error.message}`;
+  }
 }
 
 async function lineTestSignature(body, secret) {
@@ -2290,6 +2319,7 @@ function bindEvents() {
     const copyLineCurlButton = event.target.closest("#copyLineCurlBtn");
     const refreshLineButton = event.target.closest("#refreshLineStatusBtn");
     const testLineButton = event.target.closest("#testLineWebhookBtn");
+    const saveLineConfigButton = event.target.closest("#saveLineConfigBtn");
 
     if (event.target.closest("#addTripBtn")) {
       $("#newTripNameInput").focus();
@@ -2318,6 +2348,7 @@ function bindEvents() {
     if (copyLineCurlButton) copyLineCurlCommand();
     if (refreshLineButton) refreshLineStatus();
     if (testLineButton) testLineWebhook();
+    if (saveLineConfigButton) saveLineConfigToServer();
     if (removeConditionButton) {
       const id = removeConditionButton.dataset.removeConditionItem;
       renderConditionItems(collectConditionItemsFromForm().filter((item) => item.id !== id));

@@ -49,8 +49,11 @@ POST /line/webhook
 ```powershell
 $env:LINE_CHANNEL_SECRET="<CHANNEL_SECRET>"
 $env:LINE_CHANNEL_ACCESS_TOKEN="<CHANNEL_ACCESS_TOKEN>"
+$env:OPENAI_API_KEY="<OPENAI_API_KEY>"
 python server.py
 ```
+
+หรือใส่ `OPENAI_API_KEY=...` ใน `.env.local` สำหรับโหมด local ก็ได้ ไฟล์นี้ถูก ignore ไม่ควรอัปขึ้น repo
 
 นำ URL แบบ HTTPS ที่ชี้มาที่ backend ไปใส่ใน LINE Developers Console:
 
@@ -59,3 +62,54 @@ https://<your-backend-domain>/line/webhook
 ```
 
 หมายเหตุ: GitHub Pages เป็น static site จึงรับ webhook จาก LINE โดยตรงไม่ได้ ต้อง deploy `server.py` หรือ backend equivalent บน public HTTPS เช่น VPS, Render, Railway, Cloud Run หรือใช้ tunnel ระหว่างทดสอบ
+
+## Firebase + LINE OA + OpenAI
+
+โปรเจกต์นี้มี Firebase Hosting + Cloud Functions TypeScript สำหรับรับ LINE OA webhook และให้ OpenAI ช่วยตอบแชท
+
+ไฟล์หลัก:
+
+- `firebase.json`
+- `functions/src/index.ts`
+- `functions/package.json`
+
+ติดตั้ง dependency:
+
+```bash
+cd functions
+npm install
+cd ..
+```
+
+ตั้งค่า Firebase project:
+
+```bash
+copy .firebaserc.example .firebaserc
+```
+
+แล้วแก้ `your-firebase-project-id` เป็น project id จริง
+
+ตั้งค่า secrets:
+
+```bash
+firebase functions:secrets:set LINE_CHANNEL_SECRET
+firebase functions:secrets:set LINE_CHANNEL_ACCESS_TOKEN
+firebase functions:secrets:set OPENAI_API_KEY
+```
+
+ค่า default ของโมเดลอยู่ที่ `gpt-4o-mini` ใน `functions/src/index.ts`
+
+Deploy:
+
+```bash
+npm --prefix functions run build
+firebase deploy --only functions,hosting
+```
+
+Webhook URL สำหรับ LINE Developers Console:
+
+```text
+https://<your-firebase-hosting-domain>/line/webhook
+```
+
+Cloud Function จะตรวจ `X-Line-Signature`, ส่งข้อความเข้า OpenAI และ reply กลับ LINE OA ด้วย Channel Access Token

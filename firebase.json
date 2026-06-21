@@ -1,0 +1,66 @@
+{
+  "hosting": {
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      ".firebaserc",
+      ".firebaserc.example",
+      ".gitignore",
+      "README.md",
+      ".git/**",
+      ".github/**",
+      ".env",
+      ".env.*",
+      "functions/**",
+      "__pycache__/**",
+      "data.json",
+      "line_config.json",
+      "line_events.json",
+      "server.py",
+      "*.txt",
+      "ChatGPT Image*.png",
+      "*.jpg",
+      "*.jpeg",
+      "*.webp"
+    ],
+    "rewrites": [
+      {
+        "source": "/line/webhook",
+        "function": {
+          "functionId": "lineWebhook",
+          "region": "asia-southeast1"
+        }
+      },
+      {
+        "source": "/api/line/config",
+        "function": {
+          "functionId": "lineConfig",
+          "region": "asia-southeast1"
+        }
+      },
+      {
+        "source": "/api/line/events",
+        "function": {
+          "functionId": "lineEvents",
+          "region": "asia-southeast1"
+        }
+      }
+    ]
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": [
+        "npm --prefix \"$RESOURCE_DIR\" run build"
+      ]
+    }
+  ]
+}

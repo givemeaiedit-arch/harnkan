@@ -1,6 +1,15 @@
 # Local shared state and private trip data
 data.json
 line_events.json
+line_config.json
+.env
+.env.*
+functions/.env
+functions/.env.*
+functions/.secret.local
+functions/node_modules/
+functions/lib/
+node_modules/
 
 # Reference/mockup images
 ChatGPT Image*.png
