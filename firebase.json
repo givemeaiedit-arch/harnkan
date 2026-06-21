@@ -45,6 +45,13 @@
           "functionId": "lineEvents",
           "region": "asia-southeast1"
         }
+      },
+      {
+        "source": "/api/ai/groups/**",
+        "function": {
+          "functionId": "aiGroupMemory",
+          "region": "asia-southeast1"
+        }
       }
     ]
   },
