@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "target": "harnkan",
     "public": ".",
     "ignore": [
       "firebase.json",
@@ -58,9 +59,7 @@
         "firebase-debug.*.log",
         "*.local"
       ],
-      "predeploy": [
-        "npm --prefix \"$RESOURCE_DIR\" run build"
-      ]
+      "predeploy": []
     }
   ]
 }

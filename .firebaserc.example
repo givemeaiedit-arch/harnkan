@@ -1,5 +1,14 @@
 {
   "projects": {
     "default": "your-firebase-project-id"
+  },
+  "targets": {
+    "your-firebase-project-id": {
+      "hosting": {
+        "harnkan": [
+          "your-harnkan-hosting-site-id"
+        ]
+      }
+    }
   }
 }

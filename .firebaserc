@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "givemeai-gpt-hub"
+  },
+  "targets": {
+    "givemeai-gpt-hub": {
+      "hosting": {
+        "harnkan": [
+          "harnkan-givemeai-gpt-hub"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

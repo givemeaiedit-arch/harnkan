@@ -20,6 +20,9 @@ ChatGPT Image*.png
 # Python/runtime caches
 __pycache__/
 *.py[cod]
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
 
 # OS/editor files
 .DS_Store

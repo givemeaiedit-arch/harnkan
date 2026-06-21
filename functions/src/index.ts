@@ -1,12 +1,12 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { onRequest } from "firebase-functions/v2/https";
-import { defineSecret, defineString } from "firebase-functions/params";
+import { defineSecret } from "firebase-functions/params";
 import OpenAI from "openai";
 
 const lineChannelSecret = defineSecret("LINE_CHANNEL_SECRET");
 const lineChannelAccessToken = defineSecret("LINE_CHANNEL_ACCESS_TOKEN");
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
-const openaiModel = defineString("OPENAI_MODEL", { default: "gpt-4o-mini" });
+const openaiModel = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 const lineReplyUrl = "https://api.line.me/v2/bot/message/reply";
 
@@ -54,7 +54,7 @@ function fallbackReply(text: string): string {
 async function buildAiReply(text: string): Promise<string> {
   const client = new OpenAI({ apiKey: openaiApiKey.value() });
   const response = await client.chat.completions.create({
-    model: openaiModel.value(),
+    model: openaiModel,
     temperature: 0.4,
     max_tokens: 500,
     messages: [
@@ -110,6 +110,7 @@ export const lineWebhook = onRequest(
     region: "asia-southeast1",
     secrets: [lineChannelSecret, lineChannelAccessToken, openaiApiKey],
     timeoutSeconds: 30,
+    invoker: "public",
   },
   async (req, res) => {
     if (req.method !== "POST") {
@@ -135,6 +136,7 @@ export const lineConfig = onRequest(
   {
     region: "asia-southeast1",
     secrets: [lineChannelSecret, lineChannelAccessToken, openaiApiKey],
+    invoker: "public",
   },
   (_req, res) => {
     res.status(200).json({
@@ -151,6 +153,7 @@ export const lineConfig = onRequest(
 export const lineEvents = onRequest(
   {
     region: "asia-southeast1",
+    invoker: "public",
   },
   (_req, res) => {
     res.status(200).json({

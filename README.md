@@ -1,115 +1,91 @@
 # Harnkan
 
-เว็บหารค่าใช้จ่ายแบบแมนนวลสำหรับทริปหรือมื้ออาหาร ใช้งานได้ทั้งบนคอมพิวเตอร์และมือถือ
+เว็บหารค่าใช้จ่ายแบบแมนนวลสำหรับทริปหรือมื้ออาหาร ใช้งานได้ทั้งคอมพิวเตอร์และมือถือ
 
-## เปิดผ่าน GitHub Pages
+## Static Website
 
-โปรเจกต์นี้เป็น static site สำหรับ GitHub Pages โดยใช้ไฟล์หลัก:
+ไฟล์เว็บหลัก:
 
 - `index.html`
 - `styles.css`
 - `app.js`
 
-เมื่อ deploy แล้ว เว็บจะอยู่ที่:
+บน GitHub Pages เว็บใช้ `localStorage` ของแต่ละเครื่อง จึงไม่มีฐานข้อมูลกลาง:
 
 ```text
-https://<username>.github.io/harnkan/
+https://givemeaiedit-arch.github.io/harnkan/
 ```
 
-บน GitHub Pages ข้อมูลจะถูกเก็บใน `localStorage` ของแต่ละเครื่อง จึงไม่แชร์ข้อมูลกลางระหว่างผู้ใช้
+## Run on LAN
 
-## รันในวง LAN
-
-ถ้าต้องการให้เครื่องอื่นในวง LAN เห็นข้อมูลชุดเดียวกัน ให้รัน server local:
+ถ้าต้องการให้เครื่องอื่นในวง LAN ใช้ข้อมูลชุดเดียวกัน ให้รัน backend local:
 
 ```bash
 python server.py
 ```
 
-จากนั้นเปิด URL ที่แสดงใน terminal หรือใช้ IP เครื่อง host กับพอร์ต `4174`
+แล้วเปิดจากเครื่องอื่นด้วย IP ของเครื่อง host:
 
 ```text
 http://<host-ip>:4174/index.html
 ```
 
-โหมด LAN จะใช้ `data.json` เป็นไฟล์ข้อมูลกลางในเครื่อง host ไฟล์นี้ถูก ignore ไม่ควรอัปขึ้น public repo เพราะอาจมีข้อมูลทริป บัญชี และสลิป
+โหมด LAN ใช้ `data.json`, `line_config.json`, `line_events.json` เป็นไฟล์ local ซึ่งถูก ignore และไม่ควรอัปขึ้น public repo
 
-## LINE OA Webhook
+## Firebase Hosting
 
-เว็บมีหน้า `LINE OA Webhook` สำหรับคัดลอก webhook URL, สร้างคำสั่งตั้งค่า และทดสอบ endpoint
-
-เมื่อรัน backend ด้วย `server.py` จะมี endpoint:
+โปรเจกต์ Firebase:
 
 ```text
-POST /line/webhook
+givemeai-gpt-hub
 ```
 
-ตั้งค่า secret/token ก่อนรัน server:
-
-```powershell
-$env:LINE_CHANNEL_SECRET="<CHANNEL_SECRET>"
-$env:LINE_CHANNEL_ACCESS_TOKEN="<CHANNEL_ACCESS_TOKEN>"
-$env:OPENAI_API_KEY="<OPENAI_API_KEY>"
-python server.py
-```
-
-หรือใส่ `OPENAI_API_KEY=...` ใน `.env.local` สำหรับโหมด local ก็ได้ ไฟล์นี้ถูก ignore ไม่ควรอัปขึ้น repo
-
-นำ URL แบบ HTTPS ที่ชี้มาที่ backend ไปใส่ใน LINE Developers Console:
+เว็บ Harnkan ถูก deploy เป็น Hosting site แยก เพื่อไม่ทับ site หลักของโปรเจกต์:
 
 ```text
-https://<your-backend-domain>/line/webhook
-```
-
-หมายเหตุ: GitHub Pages เป็น static site จึงรับ webhook จาก LINE โดยตรงไม่ได้ ต้อง deploy `server.py` หรือ backend equivalent บน public HTTPS เช่น VPS, Render, Railway, Cloud Run หรือใช้ tunnel ระหว่างทดสอบ
-
-## Firebase + LINE OA + OpenAI
-
-โปรเจกต์นี้มี Firebase Hosting + Cloud Functions TypeScript สำหรับรับ LINE OA webhook และให้ OpenAI ช่วยตอบแชท
-
-ไฟล์หลัก:
-
-- `firebase.json`
-- `functions/src/index.ts`
-- `functions/package.json`
-
-ติดตั้ง dependency:
-
-```bash
-cd functions
-npm install
-cd ..
-```
-
-ตั้งค่า Firebase project:
-
-```bash
-copy .firebaserc.example .firebaserc
-```
-
-แล้วแก้ `your-firebase-project-id` เป็น project id จริง
-
-ตั้งค่า secrets:
-
-```bash
-firebase functions:secrets:set LINE_CHANNEL_SECRET
-firebase functions:secrets:set LINE_CHANNEL_ACCESS_TOKEN
-firebase functions:secrets:set OPENAI_API_KEY
-```
-
-ค่า default ของโมเดลอยู่ที่ `gpt-4o-mini` ใน `functions/src/index.ts`
-
-Deploy:
-
-```bash
-npm --prefix functions run build
-firebase deploy --only functions,hosting
+https://harnkan-givemeai-gpt-hub.web.app
 ```
 
 Webhook URL สำหรับ LINE Developers Console:
 
 ```text
-https://<your-firebase-hosting-domain>/line/webhook
+https://harnkan-givemeai-gpt-hub.web.app/line/webhook
 ```
 
-Cloud Function จะตรวจ `X-Line-Signature`, ส่งข้อความเข้า OpenAI และ reply กลับ LINE OA ด้วย Channel Access Token
+ตรวจสถานะ config:
+
+```text
+https://harnkan-givemeai-gpt-hub.web.app/api/line/config
+```
+
+## Firebase Functions
+
+Functions ที่เพิ่มสำหรับ Harnkan:
+
+- `lineWebhook`
+- `lineConfig`
+- `lineEvents`
+
+โปรเจกต์นี้มี Functions อื่นอยู่ใน Firebase อยู่แล้ว เวลาจะ deploy ห้ามใช้ `firebase deploy --only functions` เพราะอาจทำให้ Firebase ถามเรื่องลบ function เก่า ให้ deploy เฉพาะ function ของ Harnkan:
+
+```bash
+firebase deploy --only functions:lineWebhook,functions:lineConfig,functions:lineEvents --project givemeai-gpt-hub
+```
+
+Deploy hosting เฉพาะ site Harnkan:
+
+```bash
+firebase deploy --only hosting:harnkan --project givemeai-gpt-hub
+```
+
+## Secrets
+
+ตั้งค่า secrets ใน Firebase Secret Manager:
+
+```bash
+firebase functions:secrets:set LINE_CHANNEL_SECRET --project givemeai-gpt-hub
+firebase functions:secrets:set LINE_CHANNEL_ACCESS_TOKEN --project givemeai-gpt-hub
+firebase functions:secrets:set OPENAI_API_KEY --project givemeai-gpt-hub
+```
+
+ห้าม commit ค่า secret, `.env.local`, `data.json`, `line_config.json`, หรือไฟล์สลิป/บัญชีจริงขึ้น GitHub
