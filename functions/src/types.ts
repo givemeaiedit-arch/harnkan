@@ -95,6 +95,13 @@ export type CostEstimate = {
   estimatedThb: number;
 };
 
+export type SilentMemoryResult = {
+  status: "saved" | "scanned" | "skipped" | "skipped_sensitive" | "error";
+  savedMemoryCount: number;
+  usage: TokenUsage;
+  cost: CostEstimate;
+};
+
 export type ParsedSplitExpense = {
   title: string;
   amount: number;
@@ -122,6 +129,7 @@ export type AuditEvent = {
   outputTokens?: number;
   totalTokens?: number;
   openAiCalls?: number;
+  savedMemoryCount?: number;
   estimatedUsd?: number;
   estimatedThb?: number;
   lineReplyStatus?: number;

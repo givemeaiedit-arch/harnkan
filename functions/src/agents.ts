@@ -1,7 +1,7 @@
-import type { AgentResult, ChatTarget, CostEstimate, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense, TokenUsage } from "./types";
+import type { AgentResult, ChatTarget, CostEstimate, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense, SilentMemoryResult, TokenUsage } from "./types";
 import { createSplitExpense, deleteUserMemories, saveMemory } from "./repository";
 
-const invocationPrefixes = ["@หารกัน", "/ai", "/ดูดวง", "/หาร", "/วิเคราะห์", "/จำ", "/ลืม"];
+const botWakeWord = "วิมล";
 const harnkanUrl = "https://harnkan-givemeai-gpt-hub.web.app";
 const defaultUsdToThb = Number(process.env.USD_TO_THB_RATE || 32.9);
 
@@ -28,29 +28,29 @@ type CostTracker = {
 
 export function parseCommand(rawText: string): ParsedCommand {
   const text = rawText.trim();
-  const matched = invocationPrefixes.find((prefix) => text === prefix || text.startsWith(`${prefix} `));
-  if (!matched) return { invoked: false, route: "general", text, rawPrefix: "" };
+  const wakeIndex = text.indexOf(botWakeWord);
+  if (wakeIndex < 0) return { invoked: false, route: "general", text, rawPrefix: "" };
 
-  const body = text.slice(matched.length).trim();
-  if (matched === "/ดูดวง" || /^(ดูดวง|ดวง|ราศี)\b/i.test(body)) {
-    return { invoked: true, route: "horoscope", text: body || "ดูดวง", rawPrefix: matched };
+  const body = `${text.slice(0, wakeIndex)} ${text.slice(wakeIndex + botWakeWord.length)}`.replace(/\s+/g, " ").trim();
+  if (/^(ดูดวง|ดวง|ราศี)\b/i.test(body)) {
+    return { invoked: true, route: "horoscope", text: body || "ดูดวง", rawPrefix: botWakeWord };
   }
-  if (matched === "/หาร" || /(?:หาร|ค่าอาหาร|ค่าเบียร์|จ่าย|โอน|บาท|\d)/i.test(body)) {
-    return { invoked: true, route: "split", text: body || "หารค่าใช้จ่าย", rawPrefix: matched };
+  if (/(?:หาร|ค่าอาหาร|ค่าเบียร์|จ่าย|โอน|บาท|\d)/i.test(body)) {
+    return { invoked: true, route: "split", text: body || "หารค่าใช้จ่าย", rawPrefix: botWakeWord };
   }
-  if (matched === "/วิเคราะห์" || /(?:วิเคราะห์|ปรับคำพูด|โทน|สุภาพ|แรงไปไหม)/i.test(body)) {
-    return { invoked: true, route: "speech", text: body || "วิเคราะห์คำพูด", rawPrefix: matched };
+  if (/(?:วิเคราะห์|ปรับคำพูด|โทน|สุภาพ|แรงไปไหม)/i.test(body)) {
+    return { invoked: true, route: "speech", text: body || "วิเคราะห์คำพูด", rawPrefix: botWakeWord };
   }
-  if (matched === "/จำ" || /^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\b/i.test(body)) {
-    return { invoked: true, route: "memory", text: body.replace(/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s*/i, ""), rawPrefix: matched };
+  if (/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\b/i.test(body)) {
+    return { invoked: true, route: "memory", text: body.replace(/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s*/i, ""), rawPrefix: botWakeWord };
   }
-  if (matched === "/ลืม" || /^(ลืม|ล้างข้อมูล|ลบข้อมูล)\b/i.test(body)) {
-    return { invoked: true, route: "memory_delete", text: body.replace(/^(ลืม|ล้างข้อมูล|ลบข้อมูล)\s*/i, ""), rawPrefix: matched };
+  if (/^(ลืม|ล้างข้อมูล|ลบข้อมูล)\b/i.test(body)) {
+    return { invoked: true, route: "memory_delete", text: body.replace(/^(ลืม|ล้างข้อมูล|ลบข้อมูล)\s*/i, ""), rawPrefix: botWakeWord };
   }
   if (/^(ข้อมูลของฉัน|จำอะไรเกี่ยวกับฉัน|profile|memory)\b/i.test(body)) {
-    return { invoked: true, route: "memory_show", text: body, rawPrefix: matched };
+    return { invoked: true, route: "memory_show", text: body, rawPrefix: botWakeWord };
   }
-  return { invoked: true, route: "general", text: body || "ช่วยอะไรได้บ้าง", rawPrefix: matched };
+  return { invoked: true, route: "general", text: body || "ช่วยอะไรได้บ้าง", rawPrefix: botWakeWord };
 }
 
 export async function runAgentWorkflow(input: {
@@ -277,6 +277,36 @@ async function saveAutoMemories(
   const strongMemories = memories.filter((memory) => memory.confidence >= 0.72);
   if (!strongMemories.length) return;
   await Promise.all(strongMemories.slice(0, 3).map((memory) => saveMemory(target, memory)));
+}
+
+export async function rememberSilentlyFromMessage(input: {
+  text: string;
+  context: GroupContext;
+  target: ChatTarget;
+  openaiApiKey: string;
+  model: string;
+}): Promise<SilentMemoryResult> {
+  const tracker: CostTracker = { model: input.model, inputTokens: 0, outputTokens: 0, openAiCalls: 0 };
+  if (!input.text.trim()) {
+    const usage = usageFromTracker(tracker);
+    return { status: "skipped", savedMemoryCount: 0, usage, cost: estimateCost(usage) };
+  }
+  if (isSensitiveText(input.text)) {
+    const usage = usageFromTracker(tracker);
+    return { status: "skipped_sensitive", savedMemoryCount: 0, usage, cost: estimateCost(usage) };
+  }
+  const memories = await extractMemories(input.text, input.context, input.openaiApiKey, input.model, tracker);
+  const strongMemories = memories.filter((memory) => memory.confidence >= 0.82).slice(0, 2);
+  if (strongMemories.length) {
+    await Promise.all(strongMemories.map((memory) => saveMemory(input.target, memory)));
+  }
+  const usage = usageFromTracker(tracker);
+  return {
+    status: strongMemories.length ? "saved" : "scanned",
+    savedMemoryCount: strongMemories.length,
+    usage,
+    cost: estimateCost(usage),
+  };
 }
 
 async function extractMemories(

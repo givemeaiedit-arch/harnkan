@@ -1,6 +1,6 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
-import { parseCommand, runAgentWorkflow } from "./agents";
+import { parseCommand, rememberSilentlyFromMessage, runAgentWorkflow } from "./agents";
 import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineSignature } from "./line";
 import {
   ensureLineIdentity,
@@ -94,7 +94,7 @@ export const lineConfig = onRequest(
       openaiApiKeyConfigured: Boolean(secretValue(openaiApiKey.value())),
       aiReplyEnabled: true,
       memoryBackend: "firestore",
-      activation: "@หารกัน / /ai / /ดูดวง / /หาร / /วิเคราะห์ / /จำ / /ลืม",
+      activation: "วิมล",
     });
   },
 );
@@ -166,14 +166,25 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   await ensureLineIdentity(target, profile);
 
   if (!command.invoked) {
+    const silentMemory = await rememberSilently(event.message.text || "", target, openaiKey);
     await safeRecordAudit({
       chatId: target.chatId,
       chatType: target.chatType,
       userIdHash: hashId(target.userId),
       eventType: "message",
       messagePreview,
-      status: "ignored_not_invoked",
+      route: "memory",
+      agent: "SilentMemoryAgent",
+      status: silentMemoryStatus(silentMemory.status),
       latencyMs: Date.now() - started,
+      model: silentMemory.usage.model,
+      inputTokens: silentMemory.usage.inputTokens,
+      outputTokens: silentMemory.usage.outputTokens,
+      totalTokens: silentMemory.usage.totalTokens,
+      openAiCalls: silentMemory.usage.openAiCalls,
+      savedMemoryCount: silentMemory.savedMemoryCount,
+      estimatedUsd: silentMemory.cost.estimatedUsd,
+      estimatedThb: silentMemory.cost.estimatedThb,
     });
     return { ok: true, replied: false };
   }
@@ -260,11 +271,44 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   }
 }
 
+function silentMemoryStatus(status: string): string {
+  if (status === "saved") return "silent_memory_saved";
+  if (status === "skipped_sensitive") return "silent_memory_skipped_sensitive";
+  if (status === "skipped") return "silent_memory_skipped";
+  if (status === "error") return "silent_memory_error";
+  return "silent_memory_scanned";
+}
+
 async function safeRecordAudit(event: AuditEvent): Promise<void> {
   try {
     await recordAudit(event);
   } catch (error) {
     console.error("Record audit failed", { errorCode: errorName(error), chatIdHash: hashId(event.chatId) });
+  }
+}
+
+async function rememberSilently(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
+  try {
+    const context = await getGroupContext(target);
+    return await rememberSilentlyFromMessage({
+      text,
+      context,
+      target,
+      openaiApiKey: openaiKey,
+      model: openaiModel,
+    });
+  } catch (error) {
+    console.error("Silent memory failed", {
+      chatIdHash: hashId(target.chatId),
+      userIdHash: hashId(target.userId),
+      errorCode: errorName(error),
+    });
+    return {
+      status: "error" as const,
+      savedMemoryCount: 0,
+      usage: { model: openaiModel, inputTokens: 0, outputTokens: 0, totalTokens: 0, openAiCalls: 0 },
+      cost: { model: openaiModel, inputUsdPerMillion: 0, outputUsdPerMillion: 0, usdToThb: 0, estimatedUsd: 0, estimatedThb: 0 },
+    };
   }
 }
 

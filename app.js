@@ -2019,6 +2019,7 @@ function lineEventMarkup(entry) {
           <small>Agent: ${escapeHtml(entry.agent || "-")}</small>
           <small>Route: ${escapeHtml(entry.route || "-")}</small>
           <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
+          ${entry.savedMemoryCount ? `<small>จำได้: ${formatInteger(entry.savedMemoryCount)} รายการ</small>` : ""}
           ${entry.errorCode ? `<small class="line-event-error">Error: ${escapeHtml(entry.errorCode)}</small>` : ""}
           ${errorHint ? `<small class="line-event-error">${escapeHtml(errorHint)}</small>` : ""}
           ${replyHint ? `<small class="line-event-error">${escapeHtml(replyHint)}</small>` : ""}

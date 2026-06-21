@@ -174,6 +174,7 @@ export async function recentLineEvents(limit = 30): Promise<Record<string, unkno
       outputTokens: data.outputTokens || 0,
       totalTokens: data.totalTokens || 0,
       openAiCalls: data.openAiCalls || 0,
+      savedMemoryCount: data.savedMemoryCount || 0,
       estimatedUsd: data.estimatedUsd || 0,
       estimatedThb: data.estimatedThb || 0,
       lineReplyStatus: data.lineReplyStatus || 0,
