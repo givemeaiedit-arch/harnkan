@@ -1996,6 +1996,7 @@ async function refreshLineEvents() {
 function lineEventMarkup(entry) {
   const first = entry.events?.[0] || {};
   const statusClass = entry.status === "ok" || entry.lineReplyOk ? "ok" : String(entry.status || "").includes("ignored") ? "idle" : "error";
+  const replyHint = lineReplyHint(entry);
   const directionText = entry.lineReplyStatus
     ? `รับแล้ว / ส่งกลับ ${entry.lineReplyStatus}`
     : String(entry.status || "").includes("ignored")
@@ -2016,6 +2017,7 @@ function lineEventMarkup(entry) {
           <small>Route: ${escapeHtml(entry.route || "-")}</small>
           <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
           ${entry.errorCode ? `<small class="line-event-error">Error: ${escapeHtml(entry.errorCode)}</small>` : ""}
+          ${replyHint ? `<small class="line-event-error">${escapeHtml(replyHint)}</small>` : ""}
         </div>
         <div class="line-event-cost">
           <span>Model: ${escapeHtml(entry.model || "-")}</span>
@@ -2024,9 +2026,34 @@ function lineEventMarkup(entry) {
           <strong>${costText}</strong>
         </div>
       </div>
-      <small>${escapeHtml(entry.receivedAt || "")}</small>
+      <small>${escapeHtml(formatThaiDateTime(entry.receivedAt))}</small>
     </div>
   `;
+}
+
+function lineReplyHint(entry) {
+  if (!entry.lineReplyStatus || entry.lineReplyOk) return "";
+  const detail = entry.lineReplyError ? ` • ${entry.lineReplyError}` : "";
+  if (entry.lineReplyStatus === 400) return `LINE 400: replyToken ไม่ถูกต้อง หมดอายุ หรือถูกใช้ซ้ำ${detail}`;
+  if (entry.lineReplyStatus === 401) return `LINE 401: Channel Access Token ไม่ถูกต้องหรือหมดอายุ${detail}`;
+  if (entry.lineReplyStatus === 429) return `LINE 429: ส่งข้อความถี่เกินโควตา${detail}`;
+  return `LINE ${entry.lineReplyStatus}: ส่งกลับไม่สำเร็จ${detail}`;
+}
+
+function formatThaiDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("th-TH", {
+    timeZone: "Asia/Bangkok",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(date);
 }
 
 function formatInteger(value) {

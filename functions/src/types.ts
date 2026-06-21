@@ -125,4 +125,5 @@ export type AuditEvent = {
   estimatedThb?: number;
   lineReplyStatus?: number;
   lineReplyOk?: boolean;
+  lineReplyError?: string;
 };

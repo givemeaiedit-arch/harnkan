@@ -191,6 +191,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
     }
 
     const response = await replyToLine(channelAccessToken, replyToken, agentResult.reply);
+    const lineReplyError = response.ok ? "" : await safeResponseText(response);
     await safeRecordAudit({
       chatId: target.chatId,
       chatType: target.chatType,
@@ -210,6 +211,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       estimatedThb: agentResult.cost?.estimatedThb || 0,
       lineReplyStatus: response.status,
       lineReplyOk: response.ok,
+      lineReplyError,
     });
     console.info("LINE agent reply", {
       chatIdHash: hashId(target.chatId),
@@ -256,4 +258,12 @@ function errorName(error: unknown): string {
 
 function secretValue(value: string): string {
   return String(value || "").trim();
+}
+
+async function safeResponseText(response: Response): Promise<string> {
+  try {
+    return (await response.text()).slice(0, 300);
+  } catch {
+    return "";
+  }
 }

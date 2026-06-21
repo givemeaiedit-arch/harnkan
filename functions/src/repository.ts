@@ -177,6 +177,7 @@ export async function recentLineEvents(limit = 30): Promise<Record<string, unkno
       estimatedThb: data.estimatedThb || 0,
       lineReplyStatus: data.lineReplyStatus || 0,
       lineReplyOk: Boolean(data.lineReplyOk),
+      lineReplyError: data.lineReplyError || "",
       receivedAt: data.receivedAt?.toDate?.()?.toISOString?.() || "",
     };
   });
