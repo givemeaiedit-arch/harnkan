@@ -111,6 +111,7 @@ export type AuditEvent = {
   chatType: ChatTarget["chatType"];
   userIdHash: string;
   eventType: string;
+  messagePreview?: string;
   agent?: string;
   route?: string;
   status: string;

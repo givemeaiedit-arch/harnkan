@@ -137,12 +137,14 @@ export const aiGroupMemory = onRequest(
 async function handleLineEvent(event: LineEvent, webhookStarted: number, channelAccessToken: string, openaiKey: string): Promise<EventResult> {
   const started = Date.now();
   const target = chatTargetFromEvent(event);
+  const messagePreview = previewLineMessage(event.message?.text || "");
   if (!target || event.type !== "message" || event.message?.type !== "text") {
     await safeRecordAudit({
       chatId: target?.chatId || "unknown",
       chatType: target?.chatType || "user",
       userIdHash: hashId(target?.userId),
       eventType: event.type || "unknown",
+      messagePreview,
       status: "ignored_non_text",
       latencyMs: Date.now() - started,
     });
@@ -159,6 +161,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       chatType: target.chatType,
       userIdHash: hashId(target.userId),
       eventType: "message",
+      messagePreview,
       status: "ignored_not_invoked",
       latencyMs: Date.now() - started,
     });
@@ -182,6 +185,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
         chatType: target.chatType,
         userIdHash: hashId(target.userId),
         eventType: "message",
+        messagePreview,
         route: agentResult.route,
         agent: agentResult.agent,
         status: "missing_reply_token",
@@ -197,6 +201,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       chatType: target.chatType,
       userIdHash: hashId(target.userId),
       eventType: "message",
+      messagePreview,
       route: agentResult.route,
       agent: agentResult.agent,
       status: response.ok ? agentResult.status : "reply_failed",
@@ -228,6 +233,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       chatType: target.chatType,
       userIdHash: hashId(target.userId),
       eventType: "message",
+      messagePreview,
       route: command.route,
       agent: "TriageAgent",
       status: "error",
@@ -266,4 +272,13 @@ async function safeResponseText(response: Response): Promise<string> {
   } catch {
     return "";
   }
+}
+
+function previewLineMessage(text: string): string {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return "";
+  if (/(รหัสผ่าน|password|api\s*key|token|secret|channel\s*secret|access\s*token|เลขบัตร|บัตรประชาชน|sk-[A-Za-z0-9_-]+)/i.test(normalized)) {
+    return "[masked sensitive message]";
+  }
+  return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
 }

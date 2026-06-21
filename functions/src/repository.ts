@@ -166,6 +166,7 @@ export async function recentLineEvents(limit = 30): Promise<Record<string, unkno
       agent: data.agent || "",
       route: data.route || "",
       status: data.status || "",
+      messagePreview: data.messagePreview || "",
       latencyMs: data.latencyMs || 0,
       errorCode: data.errorCode || "",
       model: data.model || "",

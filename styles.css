@@ -976,6 +976,26 @@ button {
   gap: 6px;
 }
 
+.line-event-message {
+  display: grid;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  border-radius: 10px;
+  background: rgba(239, 246, 255, 0.74);
+}
+
+.line-event-message strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.line-event-message span {
+  color: var(--text) !important;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .line-event-meta small,
 .line-event-cost span,
 .line-event-cost strong {

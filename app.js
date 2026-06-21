@@ -2004,6 +2004,7 @@ function lineEventMarkup(entry) {
       : "รับแล้ว";
   const tokenText = `${formatInteger(entry.inputTokens || 0)} in / ${formatInteger(entry.outputTokens || 0)} out`;
   const costText = `${formatUsd(entry.estimatedUsd || 0)} • ${formatThb(entry.estimatedThb || 0)}`;
+  const messagePreview = entry.messagePreview || first.messagePreview || "";
   return `
     <div class="line-event-row line-event-row--${statusClass}">
       <div class="line-event-main">
@@ -2012,6 +2013,7 @@ function lineEventMarkup(entry) {
           <span class="line-event-status">${escapeHtml(directionText)}</span>
         </div>
         <span>${escapeHtml(first.text || entry.status || "ไม่มีข้อความ")} ${entry.eventCount ? `(${entry.eventCount} event)` : ""}</span>
+        ${messagePreview ? `<div class="line-event-message"><strong>ข้อความที่ได้รับ</strong><span>${escapeHtml(messagePreview)}</span></div>` : ""}
         <div class="line-event-meta">
           <small>Agent: ${escapeHtml(entry.agent || "-")}</small>
           <small>Route: ${escapeHtml(entry.route || "-")}</small>
