@@ -2900,11 +2900,29 @@ body.has-modal {
 }
 
 .empty-state {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
   padding: 24px;
   border: 1px dashed var(--line-strong);
   border-radius: 12px;
   color: var(--muted);
   text-align: center;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.empty-state--wide,
+.line-hourly-chart > .empty-state,
+.line-cost-chart > .empty-state,
+.line-summary-grid > .empty-state,
+.line-memory-summary-grid > .empty-state,
+.line-memory-view-switch > .empty-state {
+  grid-column: 1 / -1;
+  min-height: 120px;
 }
 
 @media (max-width: 1120px) {

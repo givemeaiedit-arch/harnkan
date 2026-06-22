@@ -619,6 +619,7 @@ const categoryMeta = {
 };
 
 const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => document.querySelectorAll(selector);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -2021,15 +2022,18 @@ async function refreshLineEvents() {
   if (!list || isGithubPagesHost()) return;
   try {
     const response = await fetch(LINE_EVENTS_URL, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     const events = Array.isArray(data.events) ? data.events : [];
     renderLineAiSummary(data.usageSummary || {}, data.analytics || {});
     renderLineDashboard(data.analytics || {});
     renderLineMemories(data.memoryDetails || { items: Array.isArray(data.memories) ? data.memories : [], categories: [] });
     list.innerHTML = events.length ? events.slice(0, 8).map(lineEventMarkup).join("") : emptyState("ยังไม่มี webhook event");
-  } catch {
-    renderLineDashboardUnavailable("อ่าน dashboard ของวิมลไม่ได้");
-    list.innerHTML = emptyState("อ่าน event ล่าสุดไม่ได้");
+  } catch (error) {
+    const detail = error?.message ? ` (${error.message})` : "";
+    console.error("Line dashboard render failed", error);
+    renderLineDashboardUnavailable(`อ่าน dashboard ของวิมลไม่ได้${detail}`);
+    list.innerHTML = emptyState(`อ่าน event ล่าสุดไม่ได้${detail}`);
   }
 }
 
@@ -2327,7 +2331,7 @@ function renderLineMemories(payload) {
 }
 
 function renderLineDashboardUnavailable(message) {
-  const fallback = emptyState(message);
+  const fallback = emptyState(message, "empty-state--wide");
   const ids = ["lineHourlyChart", "lineSummaryMetrics", "lineTopSpeakers", "lineBottomSpeakers", "lineMemoryList", "lineEventsList", "lineMemorySummaryGrid", "lineMemoryViewSwitch"];
   ids.forEach((id) => {
     const node = $(`#${id}`);
@@ -3055,8 +3059,9 @@ function showToast(message) {
   toastTimer = setTimeout(() => toast.classList.remove("is-visible"), 2800);
 }
 
-function emptyState(message) {
-  return `<div class="empty-state">${message}</div>`;
+function emptyState(message, className = "") {
+  const classes = ["empty-state", className].filter(Boolean).join(" ");
+  return `<div class="${classes}">${escapeHtml(message)}</div>`;
 }
 
 function escapeHtml(value) {
