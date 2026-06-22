@@ -2228,6 +2228,7 @@ function normalizedLineMemories(memories, ownerRows, categoryRows) {
     ...memory,
     ownerUserIdHash: memory.ownerUserIdHash || "-",
     ownerDisplayName: memory.ownerDisplayName || memory.ownerUserIdHash || "Unknown",
+    ownerProfileSummary: memory.ownerProfileSummary || {},
     category: memory.category || "note",
   }));
   const filtered = normalizedMemories.filter((memory) => {
@@ -2257,8 +2258,9 @@ function summarizeMemoryOwners(memories) {
   const map = new Map();
   memories.forEach((memory) => {
     const key = memory.ownerUserIdHash || "-";
-    const current = map.get(key) || { ownerUserIdHash: key, ownerDisplayName: memory.ownerDisplayName || key, count: 0 };
+    const current = map.get(key) || { ownerUserIdHash: key, ownerDisplayName: memory.ownerDisplayName || key, profileSummary: memory.ownerProfileSummary || {}, count: 0 };
     current.count += 1;
+    current.profileSummary = current.profileSummary || memory.ownerProfileSummary || {};
     map.set(key, current);
   });
   return [...map.values()].sort((left, right) => right.count - left.count);
@@ -2281,8 +2283,10 @@ function groupMemoriesByOwner(memories) {
       key,
       title: memory.ownerDisplayName || key,
       subtitle: `owner ${memory.ownerUserIdHash || "-"}`,
+      profileSummary: memory.ownerProfileSummary || {},
       items: [],
     };
+    current.profileSummary = current.profileSummary || memory.ownerProfileSummary || {};
     current.items.push(memory);
     grouped.set(key, current);
   });
@@ -2315,9 +2319,30 @@ function groupedMemoryMarkup(groups) {
         </div>
         <span class="line-memory-group-count">${formatInteger(group.items.length)} รายการ</span>
       </div>
+      ${memoryProfileSummaryMarkup(group.profileSummary)}
       <div class="line-memory-list">${group.items.slice(0, 24).map(lineMemoryItemMarkup).join("")}</div>
     </section>
   `).join("")}</div>`;
+}
+
+function memoryProfileSummaryMarkup(profileSummary) {
+  const entries = Object.entries(profileSummary || {}).filter(([, value]) => value);
+  if (!entries.length) return "";
+  return `<div class="line-memory-profile">${entries.map(([key, value]) => `
+    <span><b>${escapeHtml(memoryProfileLabel(key))}</b>${escapeHtml(String(value))}</span>
+  `).join("")}</div>`;
+}
+
+function memoryProfileLabel(key) {
+  const labels = {
+    profile: "โปรไฟล์",
+    food: "อาหาร",
+    birthday: "วันเกิด",
+    preference: "ความชอบ",
+    split: "หารเงิน",
+    note: "โน้ต",
+  };
+  return labels[key] || key;
 }
 
 function lineMemoryItemMarkup(memory) {

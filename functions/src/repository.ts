@@ -96,16 +96,17 @@ export async function getGroupContext(
   const members = membersSnap.docs.map((doc) => {
     const data = doc.data();
     const userId = String(data.userId || doc.id);
-    return {
-      userId,
-      displayName: String(data.displayName || hashId(userId)),
-      memories: allMemories.filter((memory) => memory.ownerUserId === userId),
-    };
+      return {
+        userId,
+        displayName: String(data.displayName || hashId(userId)),
+        profileSummary: normalizeProfileSummary(data.profileSummary),
+        memories: allMemories.filter((memory) => memory.ownerUserId === userId),
+      };
   });
 
   let currentUser = members.find((member) => member.userId === target.userId);
   if (!currentUser) {
-    currentUser = { userId: target.userId, displayName: hashId(target.userId), memories: [] };
+    currentUser = { userId: target.userId, displayName: hashId(target.userId), profileSummary: {}, memories: [] };
     members.push(currentUser);
   }
 
@@ -142,12 +143,32 @@ export async function getGroupContext(
 
 export async function saveMemory(target: ChatTarget, memory: Omit<MemberMemory, "id" | "createdAt">): Promise<string> {
   const groupRef = db.collection("lineGroups").doc(target.chatId);
+  const ownerUserId = memory.ownerUserId || target.userId;
   const docRef = groupRef.collection("memories").doc();
-  await docRef.set({
+  const payload = {
     ...memory,
-    ownerUserId: memory.ownerUserId || target.userId,
+    ownerUserId,
     createdAt: FieldValue.serverTimestamp(),
-  });
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  const memberRef = groupRef.collection("members").doc(ownerUserId);
+  const memberMemoryRef = memberRef.collection("memories").doc(docRef.id);
+  const profileUpdate = profileUpdateForMemory(memory);
+  const batch = db.batch();
+  batch.set(docRef, payload);
+  batch.set(memberMemoryRef, payload);
+  batch.set(
+    memberRef,
+    {
+      userId: ownerUserId,
+      profileSummary: profileUpdate,
+      profileUpdatedAt: FieldValue.serverTimestamp(),
+      memoryUpdatedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+  await batch.commit();
   return docRef.id;
 }
 
@@ -162,6 +183,7 @@ export async function deleteUserMemories(target: ChatTarget, selector: string): 
     const text = String(doc.get("text") || "").toLowerCase();
     if (!normalizedSelector || text.includes(normalizedSelector) || ["ทั้งหมด", "all", "ข้อมูลของฉัน"].includes(normalizedSelector)) {
       batch.delete(doc.ref);
+      batch.delete(groupRef.collection("members").doc(target.userId).collection("memories").doc(doc.id));
       count += 1;
     }
   });
@@ -406,16 +428,18 @@ export async function recentPublicMemories(limit = 30): Promise<Record<string, u
 
   const memories = await Promise.all(
     chatIds.map(async (chatId) => {
-      const names = await memberNameMap(chatId);
+      const profiles = await memberProfileMap(chatId);
       const snap = await db.collection("lineGroups").doc(chatId).collection("memories").orderBy("createdAt", "desc").limit(limit).get();
       return snap.docs.map((doc) => {
         const memory = memoryFromDoc(doc.id, doc.data() as MemoryDoc);
         const ownerUserIdHash = hashId(memory.ownerUserId);
+        const profile = profiles.get(ownerUserIdHash);
         return {
           id: memory.id,
           chatIdHash: hashId(chatId),
           ownerUserIdHash,
-          ownerDisplayName: names.get(ownerUserIdHash) || `LINE-${ownerUserIdHash}`,
+          ownerDisplayName: profile?.displayName || `LINE-${ownerUserIdHash}`,
+          ownerProfileSummary: profile?.profileSummary || {},
           category: memory.category,
           text: memory.text,
           confidence: memory.confidence,
@@ -431,17 +455,18 @@ export async function recentPublicMemories(limit = 30): Promise<Record<string, u
 export async function detailedPublicMemories(limit = 120): Promise<Record<string, unknown>> {
   const memories = await recentPublicMemories(limit);
   const byCategory = new Map<string, number>();
-  const byOwner = new Map<string, { ownerUserIdHash: string; ownerDisplayName: string; count: number }>();
+  const byOwner = new Map<string, { ownerUserIdHash: string; ownerDisplayName: string; count: number; profileSummary?: unknown }>();
   memories.forEach((memory) => {
     const category = String(memory.category || "note");
     byCategory.set(category, (byCategory.get(category) || 0) + 1);
     const ownerUserIdHash = String(memory.ownerUserIdHash || "");
     const ownerDisplayName = String(memory.ownerDisplayName || ownerUserIdHash || "Unknown");
-    const current = byOwner.get(ownerUserIdHash);
+    const current = byOwner.get(ownerUserIdHash) as { ownerUserIdHash: string; ownerDisplayName: string; count: number; profileSummary?: unknown } | undefined;
     byOwner.set(ownerUserIdHash, {
       ownerUserIdHash,
       ownerDisplayName,
       count: (current?.count || 0) + 1,
+      profileSummary: current?.profileSummary || memory.ownerProfileSummary || {},
     });
   });
   return {
@@ -497,11 +522,34 @@ function memoryFromDoc(id: string, data: MemoryDoc): MemberMemory {
   return {
     id,
     ownerUserId: String(data.ownerUserId || ""),
-    category: data.category || "note",
+    category: memoryCategory(data.category),
     text: String(data.text || ""),
     confidence: Number(data.confidence || 0.6),
     createdAt: data.createdAt?.toDate?.()?.toISOString?.() || "",
   };
+}
+
+function normalizeProfileSummary(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, item]) => [key, String(item || "").slice(0, 240)])
+      .filter(([, item]) => item),
+  );
+}
+
+function profileUpdateForMemory(memory: Omit<MemberMemory, "id" | "createdAt">): Record<string, string> {
+  const text = String(memory.text || "").slice(0, 240);
+  if (!text) return {};
+  return { [memoryCategory(memory.category)]: text };
+}
+
+function memoryCategory(value: unknown): MemberMemory["category"] {
+  const clean = String(value || "note");
+  if (["profile", "food", "birthday", "preference", "split", "note"].includes(clean)) {
+    return clean as MemberMemory["category"];
+  }
+  return "note";
 }
 
 function safeDisplayName(displayName: string | undefined, userId: string): string {
@@ -524,6 +572,20 @@ async function memberNameMap(chatId: string): Promise<Map<string, string>> {
   snap.docs.forEach((doc) => {
     const userId = String(doc.get("userId") || doc.id);
     map.set(hashId(userId), String(doc.get("displayName") || `LINE-${hashId(userId)}`));
+  });
+  return map;
+}
+
+async function memberProfileMap(chatId: string): Promise<Map<string, { displayName: string; profileSummary: Record<string, string> }>> {
+  const snap = await db.collection("lineGroups").doc(chatId).collection("members").limit(100).get();
+  const map = new Map<string, { displayName: string; profileSummary: Record<string, string> }>();
+  snap.docs.forEach((doc) => {
+    const userId = String(doc.get("userId") || doc.id);
+    const userIdHash = hashId(userId);
+    map.set(userIdHash, {
+      displayName: String(doc.get("displayName") || `LINE-${userIdHash}`),
+      profileSummary: normalizeProfileSummary(doc.get("profileSummary")),
+    });
   });
   return map;
 }

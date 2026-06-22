@@ -1313,6 +1313,30 @@ button {
   font-weight: 700;
 }
 
+.line-memory-profile {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 12px;
+  background: #f8fbff;
+}
+
+.line-memory-profile span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: #334155;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.line-memory-profile b {
+  color: var(--blue);
+  font-size: 11px;
+}
+
 .line-memory-list {
   display: grid;
   gap: 8px;
@@ -2872,6 +2896,7 @@ body.has-modal {
   .line-speaker-grid,
   .line-summary-grid,
   .line-memory-summary-grid,
+  .line-memory-profile,
   .line-memory-filter-row {
     grid-template-columns: 1fr;
   }
@@ -3018,6 +3043,7 @@ body.has-modal {
   .line-speaker-grid,
   .line-summary-grid,
   .line-memory-summary-grid,
+  .line-memory-profile,
   .line-memory-filter-row {
     grid-template-columns: 1fr;
   }

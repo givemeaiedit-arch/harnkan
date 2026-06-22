@@ -493,7 +493,7 @@ async function extractMemories(
     {
       role: "system",
       content:
-        "คุณคือ MemoryAgent สกัดเฉพาะข้อมูลที่ควรจำในกลุ่ม LINE เช่น ชื่อเล่น อาหารที่ไม่กิน วันเกิด ความชอบ เลขสำคัญที่ผู้ใช้บอกเอง หรือเงื่อนไขหารเงิน ห้ามสกัดรหัสผ่าน token secret เลขบัตร เลขบัญชี หรือข้อมูลสุขภาพละเอียด ถ้าไม่มีข้อมูลที่ควรจำให้ memories เป็น []",
+        "คุณคือ MemoryAgent สกัดเฉพาะข้อมูลที่ควรจำแยกตามบุคคลในกลุ่ม LINE โดยใส่ subjectName ให้ตรงกับเจ้าของข้อมูลเสมอ หมวด profile ใช้กับชื่อเล่น/บทบาท/ลักษณะทั่วไป, food ใช้กับอาหารที่ชอบหรือไม่กิน, birthday ใช้กับวันเกิด/ราศี, preference ใช้กับความชอบ/นิสัย/สไตล์การคุย, split ใช้กับเงื่อนไขหารเงิน ห้ามสกัดรหัสผ่าน token secret เลขบัตร เลขบัญชี หรือข้อมูลสุขภาพละเอียด ถ้าไม่มีข้อมูลที่ควรจำให้ memories เป็น []",
     },
     {
       role: "user",
@@ -670,13 +670,29 @@ function conversationContextSummary(context: GroupContext, fallbackRecentMessage
   const relatedNames = context.relatedMembers.map((member) => member.displayName).join(", ") || "- ไม่มี";
   return [
     `ผู้พูดหลัก: ${context.currentUser.displayName}`,
+    `โปรไฟล์ผู้พูด:\n${profileSummaryLines(context.currentUser.profileSummary)}`,
     `ข้อความโฟกัส: ${context.focusText || "-"}`,
     `บริบทย้อนหลังล่าสุด:\n${messageListSummary(recentMessages)}`,
     `Memory รายบุคคลของผู้พูด:\n${memoryListSummary(context.speakerMemories)}`,
     `คนที่เกี่ยวข้องในบทสนทนานี้: ${relatedNames}`,
+    `โปรไฟล์คนที่เกี่ยวข้อง:\n${context.relatedMembers.length ? context.relatedMembers.map((member) => `${member.displayName}: ${profileSummaryLines(member.profileSummary)}`).join("\n") : "- ไม่มี"}`,
     `Memory รายบุคคลของคนที่เกี่ยวข้อง:\n${memoryListSummary(context.relatedMemories)}`,
     `Memory กลุ่ม:\n${memoryListSummary(context.groupMemories)}`,
   ].join("\n\n");
+}
+
+function profileSummaryLines(profileSummary: Record<string, string> | undefined): string {
+  const entries = Object.entries(profileSummary || {}).filter(([, value]) => value);
+  if (!entries.length) return "- ไม่มี";
+  const labels: Record<string, string> = {
+    profile: "โปรไฟล์",
+    food: "อาหาร/ข้อจำกัด",
+    birthday: "วันเกิด",
+    preference: "ความชอบ",
+    split: "หารเงิน",
+    note: "โน้ต",
+  };
+  return entries.map(([key, value]) => `- ${labels[key] || key}: ${value}`).join("\n");
 }
 
 function messageListSummary(messages: string[]): string {

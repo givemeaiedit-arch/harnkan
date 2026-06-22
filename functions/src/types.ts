@@ -48,6 +48,7 @@ export type MemberMemory = {
 export type GroupMember = {
   userId: string;
   displayName: string;
+  profileSummary?: Record<string, string>;
   memories: MemberMemory[];
 };
 
