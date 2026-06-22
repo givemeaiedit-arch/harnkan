@@ -4,6 +4,7 @@ import { aiModelOptions, classifyMessageForReply, parseCommand, runAgentWorkflow
 import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineSignature } from "./line";
 import {
   claimLineEvent,
+  deleteCreatorMemory,
   ensureLineIdentity,
   aiUsageSummary,
   detailedPublicMemories,
@@ -19,8 +20,10 @@ import {
   recordBotReplyMessages,
   recordAudit,
   saveMemory,
+  searchCreatorMemories,
   setGroupBotEnabled,
   setAiRuntimeModel,
+  updateCreatorMemory,
 } from "./repository";
 import type { AuditEvent, CostEstimate, LineEvent, LineWebhookBody, MemberMemory, TokenUsage } from "./types";
 
@@ -531,7 +534,10 @@ type TechnicalCommand =
   | { action: "status" }
   | { action: "cost" }
   | { action: "model"; model?: string }
-  | { action: "enable"; enabled: boolean };
+  | { action: "enable"; enabled: boolean }
+  | { action: "memory_check"; query: string }
+  | { action: "memory_delete"; selector: string }
+  | { action: "memory_edit"; selector: string; text: string; category?: string };
 
 function isCreator(userId: string): boolean {
   return hashId(userId) === creatorUserIdHash;
@@ -544,6 +550,8 @@ function parseTechnicalCommand(text: string): TechnicalCommand | null {
   if (/(เปิดระบบ|เปิด\s*ai|เปิด\s*วิมล|start|enable)/i.test(clean)) return { action: "enable", enabled: true };
   if (/(ปิดระบบ|ปิด\s*ai|ปิด\s*วิมล|stop|disable)/i.test(clean)) return { action: "enable", enabled: false };
   if (!/(system|ซิสเต็ม|ระบบ|เทคนิค|admin)/i.test(clean)) return null;
+  const memoryCommand = parseCreatorMemoryCommand(String(text || ""));
+  if (memoryCommand) return memoryCommand;
   if (/(help|คำสั่ง|ช่วย|คู่มือ)/i.test(clean)) return { action: "help" };
   if (/(cost|usage|ค่าใช้|token|โทเคน)/i.test(clean)) return { action: "cost" };
   const modelMatch = clean.match(/(?:model|โมเดล)\s+([a-z0-9._-]+)/i);
@@ -553,7 +561,55 @@ function parseTechnicalCommand(text: string): TechnicalCommand | null {
   return { action: "status" };
 }
 
+function parseCreatorMemoryCommand(text: string): TechnicalCommand | null {
+  const body = String(text || "")
+    .replace(/(^|\s)(@?วิมล|ai)(\s|$)/i, " ")
+    .replace(/\b(system|ซิสเต็ม|ระบบ|เทคนิค|admin)\b/i, " ")
+    .trim();
+  const checkMatch = body.match(/^memory\s+(?:check|เช็ค|ตรวจ)\s+(.+)$/i);
+  if (checkMatch) return { action: "memory_check", query: checkMatch[1].trim() };
+  const deleteMatch = body.match(/^memory\s+(?:delete|del|remove|ลบ)\s+(.+)$/i);
+  if (deleteMatch) return { action: "memory_delete", selector: deleteMatch[1].trim() };
+  const editMatch = body.match(/^memory\s+(?:edit|แก้|แก้ไข)\s+(\S+)\s+(.+)$/i);
+  if (editMatch) {
+    const parsed = parseMemoryEditText(editMatch[2].trim());
+    return { action: "memory_edit", selector: editMatch[1].trim(), text: parsed.text, category: parsed.category };
+  }
+  return null;
+}
+
+function parseMemoryEditText(raw: string): { text: string; category?: string } {
+  const categoryMatch = raw.match(/(?:^|\s)(?:category|หมวด)\s*[:=]\s*(profile|food|birthday|preference|split|note)\s*$/i);
+  if (!categoryMatch) return { text: raw.trim() };
+  return {
+    text: raw.slice(0, categoryMatch.index).trim(),
+    category: categoryMatch[1],
+  };
+}
+
 async function executeTechnicalCommand(command: TechnicalCommand, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, defaultModel: string): Promise<string> {
+  if (command.action === "memory_check") {
+    const rows = await searchCreatorMemories(target, command.query, 8);
+    if (!rows.length) return `ไม่เจอ memory ที่เกี่ยวกับ “${command.query}” ค่ะ`;
+    return [
+      `เจอ memory ที่เกี่ยวกับ “${command.query}” ${rows.length} รายการ`,
+      ...rows.map((row, index) => `[${index + 1}] ${row.id.slice(0, 8)} • ${row.category} • ${row.ownerUserIdHash}\n${row.text}`),
+      "",
+      "สั่งต่อได้ เช่น:",
+      "วิมล System memory delete 1",
+      "วิมล System memory edit 1 ข้อความใหม่",
+    ].join("\n");
+  }
+  if (command.action === "memory_delete") {
+    const deleted = await deleteCreatorMemory(target, command.selector);
+    if (!deleted) return `ไม่พบ memory อ้างอิง “${command.selector}” ค่ะ ลองใช้ วิมล System memory check [ข้อความ] ก่อน`;
+    return `ลบ memory แล้วค่ะ\n${deleted.id.slice(0, 8)} • ${deleted.category}\n${deleted.text}`;
+  }
+  if (command.action === "memory_edit") {
+    const updated = await updateCreatorMemory(target, command.selector, command.text, command.category);
+    if (!updated) return `แก้ไขไม่ได้ค่ะ ไม่พบ memory “${command.selector}” หรือข้อความใหม่ว่าง`;
+    return `แก้ไข memory แล้วค่ะ\n${updated.id.slice(0, 8)} • ${updated.category}\n${updated.text}`;
+  }
   if (command.action === "enable") {
     await setGroupBotEnabled(target, command.enabled);
     return command.enabled
@@ -584,6 +640,9 @@ async function executeTechnicalCommand(command: TechnicalCommand, target: NonNul
       "วิมล System cost - ดูค่าใช้จ่าย/Token",
       "วิมล System model - ดูโมเดลปัจจุบัน",
       "วิมล System model gpt-5.4-mini - เปลี่ยนโมเดล",
+      "วิมล System memory check [ข้อความ] - ค้น memory",
+      "วิมล System memory delete 1 - ลบจากผล check ล่าสุด",
+      "วิมล System memory edit 1 [ข้อความใหม่] - แก้จากผล check ล่าสุด",
       "วิมล เปิดระบบ / วิมล ปิดระบบ - เปิดปิดการตอบในกลุ่ม",
     ].join("\n");
   }

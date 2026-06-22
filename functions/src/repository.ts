@@ -234,6 +234,117 @@ export async function deleteUserMemories(target: ChatTarget, selector: string): 
   return count;
 }
 
+export type CreatorMemoryRow = {
+  id: string;
+  ownerUserId: string;
+  ownerUserIdHash: string;
+  category: MemberMemory["category"];
+  text: string;
+  confidence: number;
+  createdAt?: string;
+};
+
+export async function searchCreatorMemories(target: ChatTarget, query: string, limit = 8): Promise<CreatorMemoryRow[]> {
+  const clean = String(query || "").trim().toLowerCase();
+  const snap = await db.collection("lineGroups").doc(target.chatId).collection("memories").orderBy("createdAt", "desc").limit(200).get();
+  const rows = snap.docs
+    .map((doc) => memoryFromDoc(doc.id, doc.data() as MemoryDoc))
+    .filter((memory) => {
+      if (!clean) return true;
+      return `${memory.text} ${memory.category} ${hashId(memory.ownerUserId)}`.toLowerCase().includes(clean);
+    })
+    .slice(0, limit)
+    .map((memory) => ({
+      id: memory.id || "",
+      ownerUserId: memory.ownerUserId,
+      ownerUserIdHash: hashId(memory.ownerUserId),
+      category: memory.category,
+      text: memory.text,
+      confidence: memory.confidence,
+      createdAt: memory.createdAt,
+    }));
+  await rememberCreatorMemoryCheck(target, rows);
+  return rows;
+}
+
+export async function deleteCreatorMemory(target: ChatTarget, selector: string): Promise<CreatorMemoryRow | null> {
+  const row = await resolveCreatorMemory(target, selector);
+  if (!row) return null;
+  const groupRef = db.collection("lineGroups").doc(target.chatId);
+  const batch = db.batch();
+  batch.delete(groupRef.collection("memories").doc(row.id));
+  batch.delete(groupRef.collection("members").doc(row.ownerUserId).collection("memories").doc(row.id));
+  await batch.commit();
+  return row;
+}
+
+export async function updateCreatorMemory(target: ChatTarget, selector: string, text: string, category?: string): Promise<CreatorMemoryRow | null> {
+  const row = await resolveCreatorMemory(target, selector);
+  const cleanText = String(text || "").trim().slice(0, 500);
+  if (!row || !cleanText) return null;
+  const nextCategory = category ? memoryCategory(category) : row.category;
+  const payload = {
+    text: cleanText,
+    category: nextCategory,
+    confidence: Math.max(row.confidence || 0.8, 0.8),
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  const groupRef = db.collection("lineGroups").doc(target.chatId);
+  const batch = db.batch();
+  batch.set(groupRef.collection("memories").doc(row.id), payload, { merge: true });
+  batch.set(groupRef.collection("members").doc(row.ownerUserId).collection("memories").doc(row.id), payload, { merge: true });
+  batch.set(
+    groupRef.collection("members").doc(row.ownerUserId),
+    {
+      profileSummary: { [nextCategory]: cleanText.slice(0, 240) },
+      profileUpdatedAt: FieldValue.serverTimestamp(),
+      memoryUpdatedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+  await batch.commit();
+  return { ...row, text: cleanText, category: nextCategory };
+}
+
+async function rememberCreatorMemoryCheck(target: ChatTarget, rows: CreatorMemoryRow[]): Promise<void> {
+  await db.collection("lineGroups").doc(target.chatId).collection("creatorMemoryChecks").doc(hashId(target.userId)).set({
+    ids: rows.map((row) => row.id),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
+async function resolveCreatorMemory(target: ChatTarget, selector: string): Promise<CreatorMemoryRow | null> {
+  const clean = String(selector || "").trim();
+  if (!clean) return null;
+  const groupRef = db.collection("lineGroups").doc(target.chatId);
+  let id = clean;
+  const indexMatch = clean.match(/^#?(\d+)$/);
+  if (indexMatch) {
+    const snap = await groupRef.collection("creatorMemoryChecks").doc(hashId(target.userId)).get();
+    const ids = Array.isArray(snap.get("ids")) ? snap.get("ids").map(String) : [];
+    id = ids[Number(indexMatch[1]) - 1] || "";
+  }
+  if (!id) return null;
+  let doc = await groupRef.collection("memories").doc(id).get();
+  if (!doc.exists && id.length >= 4) {
+    const snap = await groupRef.collection("memories").orderBy("createdAt", "desc").limit(200).get();
+    const matches = snap.docs.filter((item) => item.id.startsWith(id));
+    if (matches.length === 1) doc = matches[0];
+  }
+  if (!doc.exists) return null;
+  const memory = memoryFromDoc(doc.id, doc.data() as MemoryDoc);
+  return {
+    id: memory.id || doc.id,
+    ownerUserId: memory.ownerUserId,
+    ownerUserIdHash: hashId(memory.ownerUserId),
+    category: memory.category,
+    text: memory.text,
+    confidence: memory.confidence,
+    createdAt: memory.createdAt,
+  };
+}
+
 export async function createSplitExpense(target: ChatTarget, expense: ParsedSplitExpense): Promise<string> {
   const docRef = db.collection("lineGroups").doc(target.chatId).collection("sessions").doc();
   await docRef.set({
