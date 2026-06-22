@@ -49,6 +49,9 @@ type ClassificationOutput = {
   shouldReply: boolean;
   reason: string;
   confidence: number;
+  intent: string;
+  tasks: string[];
+  decisionReason: string;
   personalityMode: PersonalityMode;
   replyIntent: ReplyIntent;
   memories: Array<{
@@ -74,17 +77,8 @@ export function parseCommand(rawText: string, options: { invokedByReply?: boolea
     : text;
   const rawPrefix = matchedWake?.word || "reply";
   const trigger = options.invokedByReply ? "reply" : "mention";
-  if (/^(ดูดวง|ดวง|ราศี)(?:\s|$)/i.test(body)) {
-    return { invoked: true, route: "horoscope", text: body || "ดูดวง", rawPrefix, trigger };
-  }
-  if (/(?:หาร|ค่าอาหาร|ค่าเบียร์|จ่าย|โอน|บาท|\d)/i.test(body)) {
-    return { invoked: true, route: "split", text: body || "หารค่าใช้จ่าย", rawPrefix, trigger };
-  }
-  if (/(?:วิเคราะห์|ปรับคำพูด|โทน|สุภาพ|แรงไปไหม)/i.test(body)) {
-    return { invoked: true, route: "speech", text: body || "วิเคราะห์คำพูด", rawPrefix, trigger };
-  }
   if (/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)(?:\s|$)/i.test(body)) {
-    return { invoked: true, route: "memory", text: body.replace(/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s*/i, ""), rawPrefix, trigger };
+    return { invoked: true, route: "dynamic", text: body.replace(/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s*/i, ""), rawPrefix, trigger };
   }
   if (/^(ลืม|ล้างข้อมูล|ลบข้อมูล)(?:\s|$)/i.test(body)) {
     return { invoked: true, route: "memory_delete", text: body.replace(/^(ลืม|ล้างข้อมูล|ลบข้อมูล)\s*/i, ""), rawPrefix, trigger };
@@ -92,7 +86,7 @@ export function parseCommand(rawText: string, options: { invokedByReply?: boolea
   if (/^(ข้อมูลของฉัน|จำอะไรเกี่ยวกับฉัน|profile|memory)(?:\s|$)/i.test(body)) {
     return { invoked: true, route: "memory_show", text: body, rawPrefix, trigger };
   }
-  return { invoked: true, route: "general", text: body || "ช่วยอะไรได้บ้าง", rawPrefix, trigger };
+  return { invoked: true, route: "dynamic", text: body || "ช่วยอะไรได้บ้าง", rawPrefix, trigger };
 }
 
 export async function runAgentWorkflow(input: {
@@ -108,7 +102,9 @@ export async function runAgentWorkflow(input: {
 
   try {
     let result: AgentResult;
-    if (command.route === "memory") {
+    if (command.route === "dynamic" || command.route === "mixed") {
+      result = await runDynamicWimolAgent(command.text, context, target, openaiApiKey, model, tracker);
+    } else if (command.route === "memory") {
       result = await runMemoryAgent(command.text, context, target, openaiApiKey, model, tracker);
     } else if (command.route === "memory_show") {
       result = runMemoryShowAgent(context);
@@ -124,7 +120,7 @@ export async function runAgentWorkflow(input: {
       result = await runGeneralChatAgent(command.text, context, openaiApiKey, model, tracker);
     }
 
-    if (!["memory", "memory_show", "memory_delete"].includes(command.route) && shouldExtractAutoMemory(command.text)) {
+    if (!["memory", "memory_show", "memory_delete"].includes(result.route) && shouldExtractAutoMemory(command.text)) {
       await saveAutoMemories(command.text, context, target, openaiApiKey, model, tracker);
     }
     const usage = usageFromTracker(tracker);
@@ -159,6 +155,9 @@ export async function classifyMessageForReply(input: {
       shouldReply: false,
       reason,
       confidence: 0,
+      intent: "none",
+      tasks: ["chat"],
+      decisionReason: reason,
       personalityMode: "neutral",
       replyIntent: "none",
       usage,
@@ -176,6 +175,13 @@ export async function classifyMessageForReply(input: {
       shouldReply: { type: "boolean" },
       reason: { type: "string" },
       confidence: { type: "number" },
+      intent: { type: "string" },
+      tasks: {
+        type: "array",
+        maxItems: 5,
+        items: { type: "string", enum: ["chat", "memory", "split", "horoscope", "speech", "summary"] },
+      },
+      decisionReason: { type: "string" },
       personalityMode: {
         type: "string",
         enum: ["comedian", "reporter", "fortune_teller", "judge", "sports_commentator", "neutral"],
@@ -200,7 +206,7 @@ export async function classifyMessageForReply(input: {
         },
       },
     },
-    required: ["shouldReply", "reason", "confidence", "personalityMode", "replyIntent", "memories"],
+    required: ["shouldReply", "reason", "confidence", "intent", "tasks", "decisionReason", "personalityMode", "replyIntent", "memories"],
   };
 
   const result = await createJsonCompletion<ClassificationOutput>(input.openaiApiKey, input.model, schema, [
@@ -225,6 +231,9 @@ export async function classifyMessageForReply(input: {
     shouldReply,
     reason: String(result?.reason || (shouldReply ? "classifier_reply" : "classifier_no_reply")).slice(0, 180),
     confidence,
+    intent: String(result?.intent || normalizeReplyIntent(result?.replyIntent)).slice(0, 80),
+    tasks: normalizeDynamicTasks(result?.tasks),
+    decisionReason: String(result?.decisionReason || result?.reason || "").slice(0, 180),
     personalityMode: normalizePersonalityMode(result?.personalityMode),
     replyIntent: normalizeReplyIntent(result?.replyIntent),
     memories: normalizeExtractedMemories(result?.memories, input.context),
@@ -260,11 +269,86 @@ export async function runClassifierReply(input: {
   const usage = usageFromTracker(tracker);
   return {
     reply: safetyReview(reply || "วิมลขอเสริมเบา ๆ ว่าจังหวะนี้น่าจะคุยกันให้ชัดขึ้นนิดนึงนะคะ"),
-    route: "general",
-    agent: "ClassifierReplyAgent",
+    route: input.classification.tasks && input.classification.tasks.length > 1 ? "mixed" : "dynamic",
+    agent: "WimolDynamicAgent",
     status: "ok",
+    intent: input.classification.intent || input.classification.replyIntent,
+    tasks: input.classification.tasks?.length ? input.classification.tasks : [input.classification.replyIntent],
+    decisionReason: input.classification.decisionReason || input.classification.reason,
+    confidence: input.classification.confidence,
+    memoryUsedCount: input.context.speakerMemories.length + input.context.relatedMemories.length + input.context.groupMemories.length,
+    contextUsedCount: input.context.recentMessages.length,
     usage,
     cost: estimateCost(usage),
+  };
+}
+
+async function runDynamicWimolAgent(
+  text: string,
+  context: GroupContext,
+  target: ChatTarget,
+  openaiApiKey: string,
+  model: string,
+  tracker: CostTracker,
+): Promise<AgentResult> {
+  const decision = inferDynamicDecision(text, context);
+  let result: AgentResult;
+  if (decision.primaryTask === "memory") {
+    result = await runMemoryAgent(text, context, target, openaiApiKey, model, tracker);
+  } else if (decision.primaryTask === "split") {
+    result = await runSplitBillAgent(text, context, target, openaiApiKey, model, tracker);
+  } else if (decision.primaryTask === "horoscope") {
+    result = await runHoroscopeAgent(text, context, openaiApiKey, model, tracker);
+  } else if (decision.primaryTask === "speech") {
+    result = await runSpeechAnalysisAgent(text, context, openaiApiKey, model, tracker);
+  } else {
+    result = await runGeneralChatAgent(text, context, openaiApiKey, model, tracker);
+  }
+
+  return {
+    ...result,
+    route: decision.tasks.length > 1 ? "mixed" : "dynamic",
+    agent: "WimolDynamicAgent",
+    intent: decision.intent,
+    tasks: decision.tasks,
+    decisionReason: decision.reason,
+    confidence: decision.confidence,
+    memoryUsedCount: context.speakerMemories.length + context.relatedMemories.length + context.groupMemories.length,
+    contextUsedCount: context.recentMessages.length,
+  };
+}
+
+function inferDynamicDecision(text: string, context: GroupContext): {
+  intent: string;
+  tasks: string[];
+  primaryTask: string;
+  reason: string;
+  confidence: number;
+} {
+  const clean = String(text || "").trim();
+  const tasks = new Set<string>();
+  if (/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)?\s*.+/i.test(clean) && shouldExtractAutoMemory(clean)) tasks.add("memory");
+  if (/(?:หาร|ค่าอาหาร|ค่าเบียร์|ค่าเหล้า|จ่าย|โอน|บาท|\d+\s*(?:บ\.|บาท))/i.test(clean)) tasks.add("split");
+  if (/(?:ดูดวง|ดวง|ราศี|ไพ่|โชค)/i.test(clean)) tasks.add("horoscope");
+  if (/(?:วิเคราะห์|ปรับคำพูด|โทน|สุภาพ|แรงไปไหม|ควรพูด)/i.test(clean)) tasks.add("speech");
+  if (/(?:สรุป|เล่าให้ฟัง|จับประเด็น)/i.test(clean)) tasks.add("summary");
+  if (!tasks.size) tasks.add("chat");
+
+  const ordered = ["split", "memory", "speech", "horoscope", "summary", "chat"].filter((task) => tasks.has(task));
+  const primaryTask = ordered.find((task) => ["split", "memory", "speech", "horoscope"].includes(task)) || "chat";
+  const memoryCount = context.speakerMemories.length + context.relatedMemories.length + context.groupMemories.length;
+  const intent = ordered.length > 1 ? "mixed_request" : `${primaryTask}_request`;
+  const reason = [
+    ordered.length > 1 ? "พบหลายงานในข้อความเดียว" : "เลือกจากข้อความและบริบทล่าสุด",
+    `tasks=${ordered.join("+")}`,
+    memoryCount ? `ใช้ memory ${memoryCount} รายการ` : "ไม่มี memory ที่เกี่ยวข้อง",
+  ].join(" • ");
+  return {
+    intent,
+    tasks: ordered,
+    primaryTask,
+    reason,
+    confidence: ordered.includes("chat") && ordered.length === 1 ? 0.68 : 0.82,
   };
 }
 
@@ -713,6 +797,13 @@ function normalizePersonalityMode(value: unknown): PersonalityMode {
 function normalizeReplyIntent(value: unknown): ReplyIntent {
   const allowed: ReplyIntent[] = ["joke", "comfort", "opinion", "summary", "question", "none"];
   return allowed.includes(value as ReplyIntent) ? (value as ReplyIntent) : "none";
+}
+
+function normalizeDynamicTasks(value: unknown): string[] {
+  const allowed = new Set(["chat", "memory", "split", "horoscope", "speech", "summary"]);
+  const rows = Array.isArray(value) ? value : [];
+  const normalized = rows.map((item) => String(item || "").trim()).filter((item) => allowed.has(item));
+  return normalized.length ? [...new Set(normalized)].slice(0, 5) : ["chat"];
 }
 
 function normalizeExtractedMemories(

@@ -330,6 +330,11 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
         classifierReason: classifierResult.classification.reason,
         classifierConfidence: classifierResult.classification.confidence,
         personalityMode: classifierResult.classification.personalityMode,
+        intent: classifierResult.agentResult.intent || classifierResult.classification.intent || "",
+        tasks: classifierResult.agentResult.tasks || classifierResult.classification.tasks || [],
+        decisionReason: classifierResult.agentResult.decisionReason || classifierResult.classification.decisionReason || classifierResult.classification.reason,
+        memoryUsedCount: classifierResult.agentResult.memoryUsedCount || 0,
+        contextUsedCount: classifierResult.agentResult.contextUsedCount || 0,
       });
       return { ok: Boolean(response?.ok), status: response?.status, route: classifierResult.agentResult.route, agent: classifierResult.agentResult.agent, replied: Boolean(response) };
     }
@@ -358,6 +363,9 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
         classifierReason: classifierResult.classification.reason,
         classifierConfidence: classifierResult.classification.confidence,
         personalityMode: classifierResult.classification.personalityMode,
+        intent: classifierResult.classification.intent || "",
+        tasks: classifierResult.classification.tasks || [],
+        decisionReason: classifierResult.classification.decisionReason || classifierResult.classification.reason,
       });
       return { ok: true, route: "general", agent: "MessageClassifier", replied: false };
     }
@@ -433,6 +441,11 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       lineReplyStatus: response.status,
       lineReplyOk: response.ok,
       lineReplyError,
+      intent: agentResult.intent || "",
+      tasks: agentResult.tasks || [],
+      decisionReason: agentResult.decisionReason || "",
+      memoryUsedCount: agentResult.memoryUsedCount || 0,
+      contextUsedCount: agentResult.contextUsedCount || context.recentMessages.length,
     });
     console.info("LINE agent reply", {
       chatIdHash: hashId(target.chatId),
@@ -456,6 +469,9 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       status: "error",
       latencyMs: Date.now() - started,
       errorCode: errorName(error),
+      intent: "error",
+      tasks: ["chat"],
+      decisionReason: "Agent workflow failed before response",
     });
     console.error("LINE event handling failed", {
       chatIdHash: hashId(target.chatId),

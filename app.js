@@ -2543,17 +2543,19 @@ function lineEventMarkup(entry) {
           <div class="line-event-decision-card">
             <strong>การตัดสินใจของระบบ</strong>
             <div class="line-event-meta">
-              <small>Route: ${escapeHtml(lineRouteLabel(entry.route))}</small>
-              <small>Agent: ${escapeHtml(entry.agent || "-")}</small>
+              <small>งาน: ${escapeHtml(lineTasksLabel(entry))}</small>
+              <small>ผู้ตัดสินใจ: ${escapeHtml(lineAgentLabel(entry.agent))}</small>
+              ${entry.intent ? `<small>Intent: ${escapeHtml(entry.intent)}</small>` : ""}
               <small>Trigger: ${escapeHtml(lineTriggerLabel(entry.trigger))}</small>
-              ${entry.contextMessageCount ? `<small>Context: ${formatInteger(entry.contextMessageCount)} ข้อความ</small>` : ""}
+              ${entry.contextUsedCount || entry.contextMessageCount ? `<small>Context: ${formatInteger(entry.contextUsedCount || entry.contextMessageCount)} ข้อความ</small>` : ""}
+              ${entry.memoryUsedCount ? `<small>Memory ใช้ ${formatInteger(entry.memoryUsedCount)} รายการ</small>` : ""}
               <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
               ${entry.savedMemoryCount ? `<small>Memory +${formatInteger(entry.savedMemoryCount)}</small>` : `<small>Memory ไม่เพิ่ม</small>`}
             </div>
-            ${entry.classifierReason || entry.classifierConfidence || entry.personalityMode ? `
+            ${entry.decisionReason || entry.classifierReason || entry.classifierConfidence || entry.personalityMode ? `
               <div class="line-event-classifier">
-                <span>Classifier</span>
-                <b>${escapeHtml(entry.classifierReason || "ไม่มีเหตุผลจาก classifier")}</b>
+                <span>เหตุผลการเลือก</span>
+                <b>${escapeHtml(entry.decisionReason || entry.classifierReason || "ไม่มีเหตุผลจากระบบ")}</b>
                 <small>Confidence ${formatDecimal(entry.classifierConfidence || 0, 2)} • Mode ${escapeHtml(entry.personalityMode || "-")}</small>
               </div>
             ` : ""}
@@ -2652,6 +2654,8 @@ function lineReplyStepTone(entry) {
 function lineRouteLabel(route) {
   const labels = {
     general: "คุยทั่วไป",
+    dynamic: "ตัดสินใจแบบยืดหยุ่น",
+    mixed: "งานผสม",
     memory: "บันทึกความจำ",
     memory_show: "ดูความจำ",
     memory_delete: "ลบความจำ",
@@ -2661,6 +2665,40 @@ function lineRouteLabel(route) {
     settings: "ตั้งค่าระบบ",
   };
   return labels[route] || route || "-";
+}
+
+function lineTasksLabel(entry) {
+  const tasks = Array.isArray(entry.tasks) ? entry.tasks.filter(Boolean) : [];
+  if (tasks.length) return tasks.map(lineTaskLabel).join(" + ");
+  return lineRouteLabel(entry.route);
+}
+
+function lineTaskLabel(task) {
+  const labels = {
+    chat: "คุยทั่วไป",
+    memory: "จดจำข้อมูล",
+    split: "หารค่าใช้จ่าย",
+    horoscope: "ดูดวง",
+    speech: "วิเคราะห์คำพูด",
+    summary: "สรุปบทสนทนา",
+  };
+  return labels[task] || task || "-";
+}
+
+function lineAgentLabel(agent) {
+  const labels = {
+    WimolDynamicAgent: "วิมลเลือกเอง",
+    MessageClassifier: "ตัวคัดกรองข้อความ",
+    RuleGate: "กฎเบื้องต้น",
+    DeduplicationGate: "ตัวกันข้อความซ้ำ",
+    SystemControlAgent: "ตั้งค่าระบบ",
+    GeneralChatAgent: "คุยทั่วไป",
+    SplitBillAgent: "หารค่าใช้จ่าย",
+    MemoryAgent: "จัดการความจำ",
+    HoroscopeAgent: "ดูดวง",
+    SpeechAnalysisAgent: "วิเคราะห์คำพูด",
+  };
+  return labels[agent] || agent || "-";
 }
 
 function lineTriggerLabel(trigger) {

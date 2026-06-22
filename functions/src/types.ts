@@ -71,7 +71,7 @@ export type GroupContext = {
   recentMemories: MemberMemory[];
 };
 
-export type AgentRoute = "general" | "memory" | "memory_show" | "memory_delete" | "split" | "horoscope" | "speech";
+export type AgentRoute = "general" | "dynamic" | "mixed" | "memory" | "memory_show" | "memory_delete" | "split" | "horoscope" | "speech";
 
 export type PersonalityMode = "comedian" | "reporter" | "fortune_teller" | "judge" | "sports_commentator" | "neutral";
 
@@ -81,6 +81,9 @@ export type MessageClassification = {
   shouldReply: boolean;
   reason: string;
   confidence: number;
+  intent?: string;
+  tasks?: string[];
+  decisionReason?: string;
   personalityMode: PersonalityMode;
   replyIntent: ReplyIntent;
   memories?: Array<Omit<MemberMemory, "id" | "createdAt">>;
@@ -101,6 +104,12 @@ export type AgentResult = {
   route: AgentRoute;
   agent: string;
   status: "ok" | "needs_input" | "blocked" | "error";
+  intent?: string;
+  tasks?: string[];
+  decisionReason?: string;
+  confidence?: number;
+  memoryUsedCount?: number;
+  contextUsedCount?: number;
   savedMemoryCount?: number;
   splitSessionId?: string;
   usage?: TokenUsage;
@@ -175,6 +184,11 @@ export type AuditEvent = {
   classifierReason?: string;
   classifierConfidence?: number;
   personalityMode?: PersonalityMode;
+  intent?: string;
+  tasks?: string[];
+  decisionReason?: string;
+  memoryUsedCount?: number;
+  contextUsedCount?: number;
   webhookEventId?: string;
   messageId?: string;
   isRedelivery?: boolean;

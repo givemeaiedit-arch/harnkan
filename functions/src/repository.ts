@@ -346,6 +346,11 @@ export async function recentLineEvents(limit = 30): Promise<Record<string, unkno
       classifierReason: data.classifierReason || "",
       classifierConfidence: data.classifierConfidence || 0,
       personalityMode: data.personalityMode || "",
+      intent: data.intent || "",
+      tasks: Array.isArray(data.tasks) ? data.tasks : [],
+      decisionReason: data.decisionReason || "",
+      memoryUsedCount: data.memoryUsedCount || 0,
+      contextUsedCount: data.contextUsedCount || 0,
       receivedAt: data.receivedAt?.toDate?.()?.toISOString?.() || "",
     };
   });
