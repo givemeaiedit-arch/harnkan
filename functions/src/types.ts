@@ -7,8 +7,12 @@ export type LineSource = {
 
 export type LineEvent = {
   type?: string;
+  webhookEventId?: string;
   replyToken?: string;
   timestamp?: number;
+  deliveryContext?: {
+    isRedelivery?: boolean;
+  };
   source?: LineSource;
   message?: {
     id?: string;
@@ -171,4 +175,7 @@ export type AuditEvent = {
   classifierReason?: string;
   classifierConfidence?: number;
   personalityMode?: PersonalityMode;
+  webhookEventId?: string;
+  messageId?: string;
+  isRedelivery?: boolean;
 };

@@ -96,6 +96,31 @@ export async function recordConversationMessage(target: ChatTarget, profile: Lin
   );
 }
 
+export async function claimLineEvent(target: ChatTarget, event: LineEvent): Promise<{ duplicate: boolean; key: string; reason: string }> {
+  const webhookEventId = String(event.webhookEventId || "").trim();
+  const messageId = String(event.message?.id || "").trim();
+  const key = webhookEventId || messageId;
+  if (!key) return { duplicate: false, key: "", reason: "" };
+  if (event.deliveryContext?.isRedelivery) return { duplicate: true, key, reason: "line_redelivery" };
+
+  const ref = db.collection("lineProcessedEvents").doc(key);
+  const duplicate = await db.runTransaction(async (transaction) => {
+    const snap = await transaction.get(ref);
+    if (snap.exists) return true;
+    transaction.set(ref, {
+      key,
+      webhookEventId,
+      messageId,
+      chatId: target.chatId,
+      chatIdHash: hashId(target.chatId),
+      userIdHash: hashId(target.userId),
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return false;
+  });
+  return { duplicate, key, reason: duplicate ? "duplicate_event" : "" };
+}
+
 export async function getGroupContext(
   target: ChatTarget,
   options: { focusText?: string; recentMessagesLimit?: number } = {},

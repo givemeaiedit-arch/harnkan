@@ -3,6 +3,7 @@ import { defineSecret } from "firebase-functions/params";
 import { aiModelOptions, classifyMessageForReply, parseCommand, runAgentWorkflow, runClassifierReply } from "./agents";
 import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineSignature } from "./line";
 import {
+  claimLineEvent,
   ensureLineIdentity,
   aiUsageSummary,
   detailedPublicMemories,
@@ -204,6 +205,25 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       latencyMs: Date.now() - started,
     });
     return { ok: true, replied: false };
+  }
+
+  const eventClaim = await claimLineEvent(target, event);
+  if (eventClaim.duplicate) {
+    await safeRecordAudit({
+      chatId: target.chatId,
+      chatType: target.chatType,
+      userIdHash: hashId(target.userId),
+      eventType: "message",
+      messagePreview,
+      route: "general",
+      agent: "DeduplicationGate",
+      status: eventClaim.reason === "line_redelivery" ? "line_redelivery_skipped" : "duplicate_event_skipped",
+      latencyMs: Date.now() - started,
+      webhookEventId: String(event.webhookEventId || ""),
+      messageId: String(event.message?.id || ""),
+      isRedelivery: Boolean(event.deliveryContext?.isRedelivery),
+    });
+    return { ok: true, route: "general", agent: "DeduplicationGate", replied: false };
   }
 
   const profile = await fetchLineProfile(channelAccessToken, target.source);
