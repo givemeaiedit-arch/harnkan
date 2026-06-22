@@ -86,7 +86,7 @@ export function parseCommand(rawText: string, options: { invokedByReply?: boolea
   if (/^(ข้อมูลของฉัน|จำอะไรเกี่ยวกับฉัน|profile|memory)(?:\s|$)/i.test(body)) {
     return { invoked: true, route: "memory_show", text: body, rawPrefix, trigger };
   }
-  return { invoked: true, route: "dynamic", text: body || "ช่วยอะไรได้บ้าง", rawPrefix, trigger };
+  return { invoked: true, route: "dynamic", text: body || "__WAKE_ONLY__", rawPrefix, trigger };
 }
 
 export async function runAgentWorkflow(input: {
@@ -327,6 +327,15 @@ function inferDynamicDecision(text: string, context: GroupContext): {
 } {
   const clean = String(text || "").trim();
   const tasks = new Set<string>();
+  if (isWakeOnlyText(clean)) {
+    return {
+      intent: "wake_only",
+      tasks: ["chat"],
+      primaryTask: "chat",
+      reason: "ผู้ใช้เรียกชื่อวิมลเฉย ๆ ให้ตอบรับสั้นแบบธรรมชาติ ไม่ต้องแนะนำความสามารถซ้ำ",
+      confidence: 0.9,
+    };
+  }
   if (/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)?\s*.+/i.test(clean) && shouldExtractAutoMemory(clean)) tasks.add("memory");
   if (/(?:หาร|ค่าอาหาร|ค่าเบียร์|ค่าเหล้า|จ่าย|โอน|บาท|\d+\s*(?:บ\.|บาท))/i.test(clean)) tasks.add("split");
   if (/(?:ดูดวง|ดวง|ราศี|ไพ่|โชค)/i.test(clean)) tasks.add("horoscope");
@@ -353,11 +362,20 @@ function inferDynamicDecision(text: string, context: GroupContext): {
 }
 
 async function runGeneralChatAgent(text: string, context: GroupContext, openaiApiKey: string, model: string, tracker: CostTracker): Promise<AgentResult> {
+  if (isWakeOnlyText(text)) {
+    return {
+      reply: wakeOnlyReply(context),
+      route: "general",
+      agent: "GeneralChatAgent",
+      status: "ok",
+    };
+  }
+
   const reply = await createTextCompletion(openaiApiKey, model, [
     {
       role: "system",
       content:
-        `${femalePersona} ตอบสั้น ชัดเจน ถ้างานเกี่ยวกับหารเงิน ดูดวง วิเคราะห์คำพูด หรือความจำ ให้ช่วยต่อจากข้อความธรรมชาติได้ ไม่ต้องบังคับใช้คำสั่ง slash`,
+        `${femalePersona} ตอบสั้น ชัดเจน ถ้างานเกี่ยวกับหารเงิน ดูดวง วิเคราะห์คำพูด หรือความจำ ให้ช่วยต่อจากข้อความธรรมชาติได้ ไม่ต้องบังคับใช้คำสั่ง slash ห้ามตอบเป็นเมนูแนะนำความสามารถซ้ำ ๆ ถ้าผู้ใช้เรียกชื่อเฉย ๆ ให้ตอบรับแบบเพื่อนในกลุ่ม`,
     },
     {
       role: "user",
@@ -366,11 +384,39 @@ async function runGeneralChatAgent(text: string, context: GroupContext, openaiAp
   ], tracker);
 
   return {
-    reply: reply || "เรียกวิมลด้วยคำว่า “วิมล” แล้วพิมพ์เรื่องที่อยากให้ช่วยได้เลยค่ะ",
+    reply: reply || "ว่าไงคะ วิมลอยู่ตรงนี้ค่ะ",
     route: "general",
     agent: "GeneralChatAgent",
     status: "ok",
   };
+}
+
+function isWakeOnlyText(text: string): boolean {
+  return String(text || "").trim() === "__WAKE_ONLY__";
+}
+
+function wakeOnlyReply(context: GroupContext): string {
+  const lastContext = context.recentMessages
+    .slice(-3)
+    .map((line) => line.replace(/^.*?:\s*/, "").trim())
+    .filter(Boolean)
+    .filter((line) => !/^(วิมล|@วิมล|ai)$/i.test(line));
+  if (lastContext.length) {
+    const variants = [
+      "ว่าไงคะ วิมลฟังอยู่ค่ะ",
+      "มาแล้วค่ะ คุยเรื่องเมื่อกี้ต่อได้เลย",
+      "วิมลอยู่ค่ะ มีอะไรให้ช่วยต่อไหมคะ",
+      "เรียกวิมลแล้วค่ะ ว่ามาได้เลย",
+    ];
+    return variants[lastContext.join("").length % variants.length];
+  }
+  const variants = [
+    "ว่าไงคะ",
+    "มาแล้วค่ะ",
+    "วิมลอยู่ค่ะ ว่ามาได้เลย",
+    "เรียกวิมลใช่ไหมคะ",
+  ];
+  return variants[new Date().getMinutes() % variants.length];
 }
 
 async function runMemoryAgent(
