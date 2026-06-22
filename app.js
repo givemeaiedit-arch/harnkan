@@ -7,6 +7,8 @@ const CANCEL_TRANSFER_LABEL = "\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e01\u0e32\
 const CANCEL_TRANSFER_CONFIRM = "\u0e22\u0e37\u0e19\u0e22\u0e31\u0e19\u0e17\u0e35\u0e48\u0e08\u0e30\u0e22\u0e01\u0e40\u0e25\u0e34\u0e01\u0e01\u0e32\u0e23\u0e42\u0e2d\u0e19\u0e19\u0e35\u0e49\u0e44\u0e2b\u0e21?";
 let remoteSaveEnabled = false;
 let saveTimer;
+let lineMemoryUiState = { view: "all", owner: "all", category: "all" };
+let lineMemoryPayloadCache = { items: [], categories: [], owners: [] };
 
 function canUseSharedStateApi() {
   return location.protocol.startsWith("http") && !location.hostname.endsWith("github.io");
@@ -2037,10 +2039,10 @@ function renderLineDashboard(analytics = {}) {
   const today = analytics.today || {};
   $("#lineTodayReceivedLabel").textContent = formatInteger(today.receivedMessages || 0);
   $("#lineTodayRepliesLabel").textContent = formatInteger(today.repliedMessages || 0);
-  $("#lineTodaySpontaneousLabel").textContent = formatInteger(today.spontaneousReplies || 0);
+  $("#lineTodaySpontaneousLabel").textContent = formatInteger(today.classifierReplies ?? today.spontaneousReplies ?? 0);
   $("#lineTodayReceivedTimes").textContent = summarizeLineTimes(today.receivedTimes, "ยังไม่มีข้อความวันนี้");
   $("#lineTodayRepliesTimes").textContent = summarizeLineTimes(today.repliedTimes, "ยังไม่ได้ตอบวันนี้");
-  $("#lineTodaySpontaneousTimes").textContent = summarizeLineTimes(today.spontaneousTimes, "วันนี้ยังไม่ตอบเอง");
+  $("#lineTodaySpontaneousTimes").textContent = summarizeLineTimes(today.classifierTimes || today.spontaneousTimes, "วันนี้ Classifier ยังไม่เลือกตอบ");
   $("#lineAverageCostPerDayLabel").textContent = formatUsd(totals.averageCostUsdPerDay || 0);
   $("#lineAverageCostPerDayThbLabel").textContent = formatThb(totals.averageCostThbPerDay || 0);
   renderLineHourlyChart(Array.isArray(analytics.hourlyToday) ? analytics.hourlyToday : []);
@@ -2054,7 +2056,7 @@ function renderLineSummaryMetrics(totals = {}, dateRange = {}) {
   const items = [
     ["ข้อความรับรวมทั้งหมด", formatInteger(totals.receivedMessages || 0)],
     ["ข้อความตอบรวมทั้งหมด", formatInteger(totals.repliedMessages || 0)],
-    ["ตอบเองแบบไม่มีคนเรียก", formatInteger(totals.spontaneousReplies || 0)],
+    ["ตอบจาก Classifier", formatInteger(totals.classifierReplies ?? totals.spontaneousReplies ?? 0)],
     ["เฉลี่ยรับต่อวัน", formatDecimal(totals.averageReceivedPerDay || 0, 1)],
     ["เฉลี่ยตอบต่อวัน", formatDecimal(totals.averageRepliesPerDay || 0, 1)],
     ["จำนวนวันมีข้อมูล", `${formatInteger(totals.totalDays || 0)} วัน`],
@@ -2083,7 +2085,7 @@ function renderLineHourlyChart(hourly = []) {
     const spontaneous = Number(item.spontaneous || 0);
     const total = received + replied + spontaneous;
     return `
-      <div class="line-hour-bar" title="${escapeHtml(`${item.label} • รับ ${received} • ตอบ ${replied} • ตอบเอง ${spontaneous}`)}">
+      <div class="line-hour-bar" title="${escapeHtml(`${item.label} • รับ ${received} • ตอบ ${replied} • Classifier ${spontaneous}`)}">
         <div class="line-hour-total">${escapeHtml(String(total))}</div>
         <div class="line-hour-bars">
           <span class="line-hour-col line-hour-col--received" style="height:${Math.max((received / maxValue) * 160, received ? 8 : 4)}px"></span>
@@ -2125,88 +2127,358 @@ function lineSpeakerMarkup(speaker, rank, toneLabel) {
 function renderLineMemories(payload) {
   const list = $("#lineMemoryList");
   const categories = $("#lineMemoryCategoryList");
+  const summaryGrid = $("#lineMemorySummaryGrid");
+  const ownerFilter = $("#lineMemoryOwnerFilter");
+  const categoryFilter = $("#lineMemoryCategoryFilter");
+  const viewSwitch = $("#lineMemoryViewSwitch");
   const memories = Array.isArray(payload?.items) ? payload.items : Array.isArray(payload) ? payload : [];
   const categoryRows = Array.isArray(payload?.categories) ? payload.categories : [];
+  const ownerRows = Array.isArray(payload?.owners) ? payload.owners : summarizeMemoryOwners(memories);
+  lineMemoryPayloadCache = { items: memories, categories: categoryRows, owners: ownerRows };
+  const normalized = normalizedLineMemories(memories, ownerRows, categoryRows);
+  normalizeLineMemoryUiState(normalized);
   if (categories) {
     categories.innerHTML = categoryRows.length
       ? categoryRows.map((item) => `<span class="line-memory-chip">${escapeHtml(item.category || "note")} <b>${formatInteger(item.count || 0)}</b></span>`).join("")
       : `<span class="line-memory-chip">ยังไม่มีหมวดความจำ</span>`;
   }
+  if (summaryGrid) {
+    summaryGrid.innerHTML = [
+      ["ความจำทั้งหมด", formatInteger(normalized.memories.length)],
+      ["รายบุคคล", formatInteger(normalized.owners.length)],
+      ["หมวดความจำ", formatInteger(normalized.categories.length)],
+    ].map(([label, value]) => `
+      <div class="line-memory-summary-card">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+      </div>
+    `).join("");
+  }
+  if (viewSwitch) {
+    viewSwitch.innerHTML = [
+      ["all", "ทั้งหมด"],
+      ["person", "แยกตามคน"],
+      ["category", "แยกตามหมวด"],
+    ].map(([value, label]) => `
+      <button class="line-memory-view-button ${lineMemoryUiState.view === value ? "is-active" : ""}" type="button" data-line-memory-view="${escapeHtml(value)}">${escapeHtml(label)}</button>
+    `).join("");
+    viewSwitch.querySelectorAll("[data-line-memory-view]").forEach((button) => {
+      button.addEventListener("click", () => {
+        lineMemoryUiState.view = button.getAttribute("data-line-memory-view") || "all";
+        renderLineMemories(lineMemoryPayloadCache);
+      });
+    });
+  }
+  if (ownerFilter) {
+    ownerFilter.innerHTML = [
+      `<option value="all">ทุกคน</option>`,
+      ...normalized.owners.map((owner) => `<option value="${escapeHtml(owner.ownerUserIdHash)}">${escapeHtml(owner.ownerDisplayName)} (${formatInteger(owner.count)})</option>`),
+    ].join("");
+    ownerFilter.value = lineMemoryUiState.owner;
+    ownerFilter.onchange = () => {
+      lineMemoryUiState.owner = ownerFilter.value || "all";
+      renderLineMemories(lineMemoryPayloadCache);
+    };
+  }
+  if (categoryFilter) {
+    categoryFilter.innerHTML = [
+      `<option value="all">ทุกหมวด</option>`,
+      ...normalized.categories.map((item) => `<option value="${escapeHtml(item.category)}">${escapeHtml(memoryCategoryLabel(item.category))} (${formatInteger(item.count)})</option>`),
+    ].join("");
+    categoryFilter.value = lineMemoryUiState.category;
+    categoryFilter.onchange = () => {
+      lineMemoryUiState.category = categoryFilter.value || "all";
+      renderLineMemories(lineMemoryPayloadCache);
+    };
+  }
   if (!list) return;
-  if (!memories.length) {
+  if (!normalized.filtered.length) {
     list.innerHTML = emptyState("ยังไม่มีความจำที่บันทึกไว้");
     return;
   }
-  list.innerHTML = memories.slice(0, 18).map((memory) => `
-    <div class="line-memory-item line-memory-item--detailed">
-      <div class="line-memory-main">
-        <b>${escapeHtml(memory.text || "-")}</b>
-        <div class="line-memory-tags">
-          <span class="line-memory-tag">${escapeHtml(memory.category || "note")}</span>
-          <span class="line-memory-tag">confidence ${formatDecimal(memory.confidence || 0, 2)}</span>
-        </div>
-        <div class="line-memory-owner">
-          <span>owner ${escapeHtml(memory.ownerUserIdHash || "-")}</span>
-          ${memory.chatIdHash ? `<span>group ${escapeHtml(memory.chatIdHash)}</span>` : ""}
-        </div>
-      </div>
-      <small>${escapeHtml(formatThaiDateTime(memory.createdAt))}</small>
-    </div>
-  `).join("");
+  if (lineMemoryUiState.view === "person") {
+    list.innerHTML = groupedMemoryMarkup(groupMemoriesByOwner(normalized.filtered));
+    return;
+  }
+  if (lineMemoryUiState.view === "category") {
+    list.innerHTML = groupedMemoryMarkup(groupMemoriesByCategory(normalized.filtered));
+    return;
+  }
+  list.innerHTML = normalized.filtered.slice(0, 48).map(lineMemoryItemMarkup).join("");
 }
 
 function renderLineDashboardUnavailable(message) {
   const fallback = emptyState(message);
-  const ids = ["lineHourlyChart", "lineSummaryMetrics", "lineTopSpeakers", "lineBottomSpeakers", "lineMemoryList", "lineEventsList"];
+  const ids = ["lineHourlyChart", "lineSummaryMetrics", "lineTopSpeakers", "lineBottomSpeakers", "lineMemoryList", "lineEventsList", "lineMemorySummaryGrid", "lineMemoryViewSwitch"];
   ids.forEach((id) => {
     const node = $(`#${id}`);
     if (node) node.innerHTML = fallback;
   });
   const categories = $("#lineMemoryCategoryList");
   if (categories) categories.innerHTML = `<span class="line-memory-chip">ยังไม่มีข้อมูล</span>`;
+  const ownerFilter = $("#lineMemoryOwnerFilter");
+  const categoryFilter = $("#lineMemoryCategoryFilter");
+  if (ownerFilter) ownerFilter.innerHTML = `<option value="all">ทุกคน</option>`;
+  if (categoryFilter) categoryFilter.innerHTML = `<option value="all">ทุกหมวด</option>`;
+}
+
+function normalizedLineMemories(memories, ownerRows, categoryRows) {
+  const normalizedMemories = memories.map((memory) => ({
+    ...memory,
+    ownerUserIdHash: memory.ownerUserIdHash || "-",
+    ownerDisplayName: memory.ownerDisplayName || memory.ownerUserIdHash || "Unknown",
+    category: memory.category || "note",
+  }));
+  const filtered = normalizedMemories.filter((memory) => {
+    const ownerPass = lineMemoryUiState.owner === "all" || memory.ownerUserIdHash === lineMemoryUiState.owner;
+    const categoryPass = lineMemoryUiState.category === "all" || memory.category === lineMemoryUiState.category;
+    return ownerPass && categoryPass;
+  });
+  return {
+    memories: normalizedMemories,
+    filtered,
+    owners: ownerRows.length ? ownerRows : summarizeMemoryOwners(normalizedMemories),
+    categories: categoryRows.length ? categoryRows : summarizeMemoryCategories(normalizedMemories),
+  };
+}
+
+function normalizeLineMemoryUiState(normalized) {
+  if (!["all", "person", "category"].includes(lineMemoryUiState.view)) lineMemoryUiState.view = "all";
+  if (lineMemoryUiState.owner !== "all" && !normalized.owners.some((owner) => owner.ownerUserIdHash === lineMemoryUiState.owner)) {
+    lineMemoryUiState.owner = "all";
+  }
+  if (lineMemoryUiState.category !== "all" && !normalized.categories.some((item) => item.category === lineMemoryUiState.category)) {
+    lineMemoryUiState.category = "all";
+  }
+}
+
+function summarizeMemoryOwners(memories) {
+  const map = new Map();
+  memories.forEach((memory) => {
+    const key = memory.ownerUserIdHash || "-";
+    const current = map.get(key) || { ownerUserIdHash: key, ownerDisplayName: memory.ownerDisplayName || key, count: 0 };
+    current.count += 1;
+    map.set(key, current);
+  });
+  return [...map.values()].sort((left, right) => right.count - left.count);
+}
+
+function summarizeMemoryCategories(memories) {
+  const map = new Map();
+  memories.forEach((memory) => {
+    const key = memory.category || "note";
+    map.set(key, (map.get(key) || 0) + 1);
+  });
+  return [...map.entries()].map(([category, count]) => ({ category, count })).sort((left, right) => right.count - left.count);
+}
+
+function groupMemoriesByOwner(memories) {
+  const grouped = new Map();
+  memories.forEach((memory) => {
+    const key = memory.ownerUserIdHash || "-";
+    const current = grouped.get(key) || {
+      key,
+      title: memory.ownerDisplayName || key,
+      subtitle: `owner ${memory.ownerUserIdHash || "-"}`,
+      items: [],
+    };
+    current.items.push(memory);
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].sort((left, right) => right.items.length - left.items.length);
+}
+
+function groupMemoriesByCategory(memories) {
+  const grouped = new Map();
+  memories.forEach((memory) => {
+    const key = memory.category || "note";
+    const current = grouped.get(key) || {
+      key,
+      title: memoryCategoryLabel(key),
+      subtitle: "แยกตามหมวดความจำ",
+      items: [],
+    };
+    current.items.push(memory);
+    grouped.set(key, current);
+  });
+  return [...grouped.values()].sort((left, right) => right.items.length - left.items.length);
+}
+
+function groupedMemoryMarkup(groups) {
+  return `<div class="line-memory-group-list">${groups.map((group) => `
+    <section class="line-memory-group">
+      <div class="line-memory-group-head">
+        <div>
+          <strong>${escapeHtml(group.title || "-")}</strong>
+          <span>${escapeHtml(group.subtitle || "-")}</span>
+        </div>
+        <span class="line-memory-group-count">${formatInteger(group.items.length)} รายการ</span>
+      </div>
+      <div class="line-memory-list">${group.items.slice(0, 24).map(lineMemoryItemMarkup).join("")}</div>
+    </section>
+  `).join("")}</div>`;
+}
+
+function lineMemoryItemMarkup(memory) {
+  return `
+    <div class="line-memory-item line-memory-item--detailed">
+      <div class="line-memory-main">
+        <b>${escapeHtml(memory.text || "-")}</b>
+        <div class="line-memory-tags">
+          <span class="line-memory-tag">${escapeHtml(memoryCategoryLabel(memory.category || "note"))}</span>
+          <span class="line-memory-tag">confidence ${formatDecimal(memory.confidence || 0, 2)}</span>
+        </div>
+        <div class="line-memory-owner">
+          <span>${escapeHtml(memory.ownerDisplayName || memory.ownerUserIdHash || "-")}</span>
+          ${memory.chatIdHash ? `<span>group ${escapeHtml(memory.chatIdHash)}</span>` : ""}
+        </div>
+      </div>
+      <small>${escapeHtml(formatThaiDateTime(memory.createdAt))}</small>
+    </div>
+  `;
+}
+
+function memoryCategoryLabel(category) {
+  const labels = {
+    profile: "ข้อมูลส่วนตัว",
+    food: "อาหาร",
+    birthday: "วันเกิด",
+    preference: "ความชอบ",
+    split: "หารเงิน",
+    note: "โน้ต",
+  };
+  return labels[category] || category || "โน้ต";
 }
 
 function lineEventMarkup(entry) {
   const first = entry.events?.[0] || {};
-  const statusClass = entry.status === "ok" || entry.lineReplyOk ? "ok" : String(entry.status || "").includes("ignored") ? "idle" : "error";
+  const statusMeta = lineEventStatusMeta(entry);
   const replyHint = lineReplyHint(entry);
   const errorHint = lineEventErrorHint(entry);
-  const directionText = entry.lineReplyStatus
-    ? `รับแล้ว / ส่งกลับ ${entry.lineReplyStatus}`
-    : String(entry.status || "").includes("ignored")
-      ? "รับแล้ว / ไม่ตอบ"
-      : "รับแล้ว";
   const tokenText = `${formatInteger(entry.inputTokens || 0)} in / ${formatInteger(entry.outputTokens || 0)} out`;
   const costText = `${formatUsd(entry.estimatedUsd || 0)} • ${formatThb(entry.estimatedThb || 0)}`;
   const messagePreview = entry.messagePreview || first.messagePreview || "";
+  const rawStatus = String(entry.status || "");
+  const eventLabel = `${first.type || entry.eventType || "webhook"}${first.messageType ? ` / ${first.messageType}` : ""}`;
+  const timestamp = formatThaiDateTime(entry.receivedAt);
+  const issues = [errorHint, replyHint].filter(Boolean);
   return `
-    <div class="line-event-row line-event-row--${statusClass}">
+    <div class="line-event-row line-event-row--${statusMeta.className}">
       <div class="line-event-main">
         <div class="line-event-title">
-          <b>${escapeHtml(first.type || entry.eventType || "webhook")}${first.messageType ? ` / ${escapeHtml(first.messageType)}` : ""}</b>
-          <span class="line-event-status">${escapeHtml(directionText)}</span>
+          <div>
+            <b>${escapeHtml(eventLabel)}</b>
+            <span>${escapeHtml(timestamp)} ${entry.eventCount ? `• ${formatInteger(entry.eventCount)} event` : ""}</span>
+          </div>
+          <span class="line-event-status line-event-status--${statusMeta.className}">${escapeHtml(statusMeta.label)}</span>
         </div>
-        <span>${escapeHtml(first.text || entry.status || "ไม่มีข้อความ")} ${entry.eventCount ? `(${entry.eventCount} event)` : ""}</span>
-        ${messagePreview ? `<div class="line-event-message"><strong>ข้อความที่ได้รับ</strong><span>${escapeHtml(messagePreview)}</span></div>` : ""}
-        <div class="line-event-meta">
-          <small>Agent: ${escapeHtml(entry.agent || "-")}</small>
-          <small>Route: ${escapeHtml(entry.route || "-")}</small>
-          <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
-          ${entry.savedMemoryCount ? `<small>จำได้: ${formatInteger(entry.savedMemoryCount)} รายการ</small>` : ""}
-          ${entry.errorCode ? `<small class="line-event-error">Error: ${escapeHtml(entry.errorCode)}</small>` : ""}
-          ${errorHint ? `<small class="line-event-error">${escapeHtml(errorHint)}</small>` : ""}
-          ${replyHint ? `<small class="line-event-error">${escapeHtml(replyHint)}</small>` : ""}
+
+        <div class="line-event-flow">
+          ${lineEventFlowSteps(entry).map((step) => `
+            <div class="line-event-step line-event-step--${escapeHtml(step.tone)}">
+              <span>${escapeHtml(step.index)}</span>
+              <div>
+                <b>${escapeHtml(step.title)}</b>
+                <small>${escapeHtml(step.detail)}</small>
+              </div>
+            </div>
+          `).join("")}
         </div>
-        <div class="line-event-cost">
-          <span>Model: ${escapeHtml(entry.model || "-")}</span>
-          <span>Calls: ${formatInteger(entry.openAiCalls || 0)}</span>
-          <span>Tokens: ${tokenText}</span>
-          <strong>${costText}</strong>
+
+        <div class="line-event-content-grid">
+          <div class="line-event-message">
+            <strong>ข้อความที่รับ</strong>
+            <span>${escapeHtml(messagePreview || first.text || rawStatus || "ไม่มีข้อความ")}</span>
+          </div>
+
+          <div class="line-event-decision-card">
+            <strong>การตัดสินใจของระบบ</strong>
+            <div class="line-event-meta">
+              <small>Route: ${escapeHtml(lineRouteLabel(entry.route))}</small>
+              <small>Agent: ${escapeHtml(entry.agent || "-")}</small>
+              <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
+              ${entry.savedMemoryCount ? `<small>Memory +${formatInteger(entry.savedMemoryCount)}</small>` : `<small>Memory ไม่เพิ่ม</small>`}
+            </div>
+            ${entry.classifierReason || entry.classifierConfidence || entry.personalityMode ? `
+              <div class="line-event-classifier">
+                <span>Classifier</span>
+                <b>${escapeHtml(entry.classifierReason || "ไม่มีเหตุผลจาก classifier")}</b>
+                <small>Confidence ${formatDecimal(entry.classifierConfidence || 0, 2)} • Mode ${escapeHtml(entry.personalityMode || "-")}</small>
+              </div>
+            ` : ""}
+          </div>
         </div>
+
+        <div class="line-event-footer">
+          <div class="line-event-cost">
+            <span>Model: ${escapeHtml(entry.model || "-")}</span>
+            <span>Calls: ${formatInteger(entry.openAiCalls || 0)}</span>
+            <span>Tokens: ${tokenText}</span>
+            <strong>${costText}</strong>
+          </div>
+          ${entry.lineReplyStatus ? `<span class="line-event-http">LINE ${formatInteger(entry.lineReplyStatus)}</span>` : ""}
+        </div>
+
+        ${entry.errorCode || issues.length ? `
+          <div class="line-event-alert">
+            ${entry.errorCode ? `<b>Error: ${escapeHtml(entry.errorCode)}</b>` : ""}
+            ${issues.map((issue) => `<span>${escapeHtml(issue)}</span>`).join("")}
+          </div>
+        ` : ""}
       </div>
-      <small>${escapeHtml(formatThaiDateTime(entry.receivedAt))}</small>
     </div>
   `;
+}
+
+function lineEventStatusMeta(entry) {
+  const status = String(entry.status || "");
+  if (entry.lineReplyOk || status === "ok") return { className: "ok", label: "ตอบแล้ว" };
+  if (status === "classifier_no_reply") return { className: "idle", label: "Classifier ไม่ตอบ" };
+  if (status.includes("silent_memory")) return { className: "memory", label: "จำเงียบ" };
+  if (status.includes("ignored")) return { className: "idle", label: "ไม่ใช่ข้อความ" };
+  if (status === "missing_reply_token") return { className: "warning", label: "ไม่มี reply token" };
+  if (status.includes("failed") || status === "error" || entry.errorCode || (entry.lineReplyStatus && !entry.lineReplyOk)) {
+    return { className: "error", label: "ผิดพลาด" };
+  }
+  return { className: "idle", label: status || "รับแล้ว" };
+}
+
+function lineEventFlowSteps(entry) {
+  const status = String(entry.status || "");
+  const hasReply = Boolean(entry.lineReplyOk);
+  const classifierRan = entry.agent === "MessageClassifier" || Boolean(entry.classifierReason) || status.startsWith("classifier_");
+  const memorySaved = Number(entry.savedMemoryCount || 0) > 0;
+  return [
+    { index: "1", title: "รับข้อความ", detail: entry.eventType === "message" ? "Webhook รับ message event แล้ว" : `รับ ${entry.eventType || "event"}`, tone: "ok" },
+    { index: "2", title: "Memory", detail: memorySaved ? `บันทึก ${formatInteger(entry.savedMemoryCount)} รายการ` : "สแกนแล้ว ไม่เพิ่มข้อมูลใหม่", tone: memorySaved ? "ok" : "idle" },
+    {
+      index: "3",
+      title: "Classifier",
+      detail: classifierRan
+        ? (status === "classifier_no_reply" ? "ตรวจแล้วเลือกไม่ตอบ" : `เลือก ${entry.personalityMode || "mode"} • ${formatDecimal(entry.classifierConfidence || 0, 2)}`)
+        : (entry.lineReplyOk ? "ข้าม เพราะเป็นคำสั่งเรียกวิมลโดยตรง" : "ไม่เข้าเงื่อนไขให้ประเมิน"),
+      tone: classifierRan && status !== "classifier_no_reply" ? "ok" : "idle",
+    },
+    {
+      index: "4",
+      title: "ตอบกลับ LINE",
+      detail: hasReply ? `ส่งสำเร็จ HTTP ${entry.lineReplyStatus || 200}` : (entry.lineReplyStatus ? `ส่งไม่สำเร็จ HTTP ${entry.lineReplyStatus}` : "ไม่ได้ส่งข้อความกลับ"),
+      tone: hasReply ? "ok" : (entry.lineReplyStatus ? "error" : "idle"),
+    },
+  ];
+}
+
+function lineRouteLabel(route) {
+  const labels = {
+    general: "คุยทั่วไป",
+    memory: "บันทึกความจำ",
+    memory_show: "ดูความจำ",
+    memory_delete: "ลบความจำ",
+    split: "หารค่าใช้จ่าย",
+    horoscope: "ดูดวง",
+    speech: "วิเคราะห์คำพูด",
+  };
+  return labels[route] || route || "-";
 }
 
 function lineEventErrorHint(entry) {

@@ -1,6 +1,6 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
-import { aiModelOptions, parseCommand, rememberSilentlyFromMessage, runAgentWorkflow, runSpontaneousComment } from "./agents";
+import { aiModelOptions, classifyMessageForReply, parseCommand, rememberSilentlyFromMessage, runAgentWorkflow, runClassifierReply } from "./agents";
 import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineSignature } from "./line";
 import {
   ensureLineIdentity,
@@ -11,22 +11,20 @@ import {
   groupMemoriesForAdmin,
   isReplyToKnownBotMessage,
   lineDashboardAnalytics,
-  recentGroupMessageContext,
   recentPublicMemories,
   recentLineEvents,
   recordBotReplyMessages,
   recordAudit,
   setAiRuntimeModel,
 } from "./repository";
-import type { AuditEvent, LineEvent, LineWebhookBody } from "./types";
+import type { AuditEvent, CostEstimate, LineEvent, LineWebhookBody, TokenUsage } from "./types";
 
 const lineChannelSecret = defineSecret("LINE_CHANNEL_SECRET");
 const lineChannelAccessToken = defineSecret("LINE_CHANNEL_ACCESS_TOKEN");
 const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const defaultOpenAiModel = process.env.OPENAI_MODEL || "gpt-5.4-mini";
+const classifierModel = process.env.CLASSIFIER_MODEL || "gpt-4.1-nano";
 const adminApiKey = process.env.AI_ADMIN_KEY || "";
-const spontaneousReplyMinProbability = 0.1;
-const spontaneousReplyMaxProbability = 0.3;
 
 type EventResult = {
   ok: boolean;
@@ -122,9 +120,10 @@ export const lineConfig = onRequest(
       openaiApiKeyConfigured: Boolean(secretValue(openaiApiKey.value())),
       aiReplyEnabled: true,
       memoryBackend: "firestore",
-      activation: "วิมล / @วิมล / AI / reply ข้อความของวิมล / สุ่มแทรกจากบริบท 10-30%",
+      activation: "วิมล / @วิมล / AI / reply ข้อความของวิมล / Classifier เลือกตอบเมื่อมีจังหวะเหมาะ",
       aiModel: aiConfig.model,
       aiModelLabel: aiConfig.modelLabel,
+      classifierModel,
       modelOptions: aiModelOptions,
     });
   },
@@ -210,12 +209,14 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
 
   if (!command.invoked) {
     const silentMemory = await rememberSilently(event.message.text || "", target, openaiKey);
-    const spontaneousResult = await maybeRunSpontaneousComment(event.message.text || "", target, openaiKey);
-    if (spontaneousResult) {
+    const classifierResult = await maybeRunClassifierReply(event.message.text || "", target, openaiKey);
+    if (classifierResult?.agentResult) {
       const replyToken = event.replyToken || "";
-      const response = replyToken ? await replyToLine(channelAccessToken, replyToken, spontaneousResult.reply) : null;
+      const response = replyToken ? await replyToLine(channelAccessToken, replyToken, classifierResult.agentResult.reply) : null;
       if (response?.ok) await recordBotReplyMessages(target, await sentMessageIds(response));
       const lineReplyError = response && !response.ok ? await safeResponseText(response) : "";
+      const usage = mergeUsage(classifierResult.classification.usage, classifierResult.agentResult.usage);
+      const cost = mergeCost(classifierResult.classification.cost, classifierResult.agentResult.cost);
       await safeRecordAudit({
         chatId: target.chatId,
         chatType: target.chatType,
@@ -223,23 +224,54 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
         eventType: "message",
         messagePreview,
         route: "general",
-        agent: spontaneousResult.agent,
-        status: response?.ok ? "spontaneous_reply" : "spontaneous_reply_failed",
+        agent: classifierResult.agentResult.agent,
+        status: response?.ok ? "classifier_reply" : "classifier_reply_failed",
         latencyMs: Date.now() - webhookStarted,
         errorCode: response && !response.ok ? `LINE_REPLY_${response.status}` : "",
-        model: spontaneousResult.usage?.model,
-        inputTokens: spontaneousResult.usage?.inputTokens || 0,
-        outputTokens: spontaneousResult.usage?.outputTokens || 0,
-        totalTokens: spontaneousResult.usage?.totalTokens || 0,
-        openAiCalls: spontaneousResult.usage?.openAiCalls || 0,
+        model: usage.model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        openAiCalls: usage.openAiCalls,
         savedMemoryCount: silentMemory.savedMemoryCount,
-        estimatedUsd: spontaneousResult.cost?.estimatedUsd || 0,
-        estimatedThb: spontaneousResult.cost?.estimatedThb || 0,
+        estimatedUsd: cost.estimatedUsd,
+        estimatedThb: cost.estimatedThb,
         lineReplyStatus: response?.status || 0,
         lineReplyOk: Boolean(response?.ok),
         lineReplyError,
+        classifierReason: classifierResult.classification.reason,
+        classifierConfidence: classifierResult.classification.confidence,
+        personalityMode: classifierResult.classification.personalityMode,
       });
-      return { ok: Boolean(response?.ok), status: response?.status, route: spontaneousResult.route, agent: spontaneousResult.agent, replied: Boolean(response) };
+      return { ok: Boolean(response?.ok), status: response?.status, route: classifierResult.agentResult.route, agent: classifierResult.agentResult.agent, replied: Boolean(response) };
+    }
+
+    if (classifierResult?.classification) {
+      const usage = classifierResult.classification.usage || emptyUsage(classifierModel);
+      const cost = classifierResult.classification.cost || emptyCost(classifierModel);
+      await safeRecordAudit({
+        chatId: target.chatId,
+        chatType: target.chatType,
+        userIdHash: hashId(target.userId),
+        eventType: "message",
+        messagePreview,
+        route: "general",
+        agent: "MessageClassifier",
+        status: "classifier_no_reply",
+        latencyMs: Date.now() - started,
+        model: usage.model,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        openAiCalls: usage.openAiCalls,
+        savedMemoryCount: silentMemory.savedMemoryCount,
+        estimatedUsd: cost.estimatedUsd,
+        estimatedThb: cost.estimatedThb,
+        classifierReason: classifierResult.classification.reason,
+        classifierConfidence: classifierResult.classification.confidence,
+        personalityMode: classifierResult.classification.personalityMode,
+      });
+      return { ok: true, route: "general", agent: "MessageClassifier", replied: false };
     }
 
     await safeRecordAudit({
@@ -265,7 +297,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   }
 
   try {
-    const context = await getGroupContext(target);
+    const context = await getGroupContext(target, { focusText: event.message.text || "", recentMessagesLimit: 12 });
     const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
     const agentResult = await runAgentWorkflow({
       command,
@@ -348,37 +380,34 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   }
 }
 
-async function maybeRunSpontaneousComment(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
-  if (!shouldAttemptSpontaneous(text)) return null;
+async function maybeRunClassifierReply(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
   try {
-    const recentMessages = await recentGroupMessageContext(target.chatId, 10);
-    if (recentMessages.length < 3) return null;
-    const context = await getGroupContext(target);
+    const context = await getGroupContext(target, { focusText: text, recentMessagesLimit: 30 });
+    const classification = await classifyMessageForReply({
+      text,
+      context,
+      openaiApiKey: openaiKey,
+      model: classifierModel,
+    });
+    if (!classification.shouldReply) return { classification };
     const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
-    return await runSpontaneousComment({
+    const agentResult = await runClassifierReply({
       currentText: text,
-      recentMessages,
+      classification,
       context,
       target,
       openaiApiKey: openaiKey,
       model: aiConfig.model,
     });
+    return { classification, agentResult };
   } catch (error) {
-    console.error("Spontaneous comment failed", {
+    console.error("Classifier reply failed", {
       chatIdHash: hashId(target.chatId),
       userIdHash: hashId(target.userId),
       errorCode: errorName(error),
     });
     return null;
   }
-}
-
-function shouldAttemptSpontaneous(text: string): boolean {
-  const clean = String(text || "").trim();
-  if (clean.length < 4) return false;
-  if (previewLineMessage(clean) === "[masked sensitive message]") return false;
-  const threshold = spontaneousReplyMinProbability + Math.random() * (spontaneousReplyMaxProbability - spontaneousReplyMinProbability);
-  return Math.random() < threshold;
 }
 
 async function sentMessageIds(response: Response): Promise<string[]> {
@@ -398,6 +427,39 @@ function silentMemoryStatus(status: string): string {
   return "silent_memory_scanned";
 }
 
+function mergeUsage(first: TokenUsage | undefined, second: TokenUsage | undefined): TokenUsage {
+  const safeFirst = first || emptyUsage("");
+  const safeSecond = second || emptyUsage("");
+  return {
+    model: [safeFirst.model, safeSecond.model].filter(Boolean).join("+") || defaultOpenAiModel,
+    inputTokens: safeFirst.inputTokens + safeSecond.inputTokens,
+    outputTokens: safeFirst.outputTokens + safeSecond.outputTokens,
+    totalTokens: safeFirst.totalTokens + safeSecond.totalTokens,
+    openAiCalls: safeFirst.openAiCalls + safeSecond.openAiCalls,
+  };
+}
+
+function mergeCost(first: CostEstimate | undefined, second: CostEstimate | undefined): CostEstimate {
+  const safeFirst = first || emptyCost("");
+  const safeSecond = second || emptyCost("");
+  return {
+    model: [safeFirst.model, safeSecond.model].filter(Boolean).join("+") || defaultOpenAiModel,
+    inputUsdPerMillion: safeSecond.inputUsdPerMillion || safeFirst.inputUsdPerMillion,
+    outputUsdPerMillion: safeSecond.outputUsdPerMillion || safeFirst.outputUsdPerMillion,
+    usdToThb: safeSecond.usdToThb || safeFirst.usdToThb,
+    estimatedUsd: safeFirst.estimatedUsd + safeSecond.estimatedUsd,
+    estimatedThb: safeFirst.estimatedThb + safeSecond.estimatedThb,
+  };
+}
+
+function emptyUsage(model: string): TokenUsage {
+  return { model, inputTokens: 0, outputTokens: 0, totalTokens: 0, openAiCalls: 0 };
+}
+
+function emptyCost(model: string): CostEstimate {
+  return { model, inputUsdPerMillion: 0, outputUsdPerMillion: 0, usdToThb: 0, estimatedUsd: 0, estimatedThb: 0 };
+}
+
 async function safeRecordAudit(event: AuditEvent): Promise<void> {
   try {
     await recordAudit(event);
@@ -408,7 +470,7 @@ async function safeRecordAudit(event: AuditEvent): Promise<void> {
 
 async function rememberSilently(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
   try {
-    const context = await getGroupContext(target);
+    const context = await getGroupContext(target, { focusText: text, recentMessagesLimit: 12 });
     const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
     return await rememberSilentlyFromMessage({
       text,

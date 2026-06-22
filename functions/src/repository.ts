@@ -55,12 +55,16 @@ export async function ensureLineIdentity(target: ChatTarget, profile: LineProfil
   ]);
 }
 
-export async function getGroupContext(target: ChatTarget): Promise<GroupContext> {
+export async function getGroupContext(
+  target: ChatTarget,
+  options: { focusText?: string; recentMessagesLimit?: number } = {},
+): Promise<GroupContext> {
   const groupRef = db.collection("lineGroups").doc(target.chatId);
-  const [groupSnap, membersSnap, memoriesSnap] = await Promise.all([
+  const [groupSnap, membersSnap, memoriesSnap, recentMessages] = await Promise.all([
     groupRef.get(),
     groupRef.collection("members").limit(30).get(),
-    groupRef.collection("memories").orderBy("createdAt", "desc").limit(30).get(),
+    groupRef.collection("memories").orderBy("createdAt", "desc").limit(60).get(),
+    recentGroupMessageContext(target.chatId, options.recentMessagesLimit || 12),
   ]);
 
   const aliases = groupSnap.get("aliases");
@@ -81,12 +85,33 @@ export async function getGroupContext(target: ChatTarget): Promise<GroupContext>
     members.push(currentUser);
   }
 
+  const speakerMemories = currentUser.memories.slice(0, 10);
+  const relatedMembers = findRelatedMembers(members, currentUser, options.focusText || "", recentMessages);
+  const relatedMemories = dedupeMemories(
+    relatedMembers
+      .flatMap((member) => member.memories)
+      .sort(compareMemoryCreatedAt)
+      .slice(0, 16),
+  );
+  const groupMemories = dedupeMemories(
+    allMemories
+      .filter((memory) => memory.ownerUserId !== currentUser.userId)
+      .sort(compareMemoryCreatedAt)
+      .slice(0, 20),
+  );
+
   return {
     chatId: target.chatId,
     chatType: target.chatType,
     aliasPrefixes: Array.isArray(aliases) && aliases.length ? aliases.map(String) : defaultAliases,
     members,
     currentUser,
+    focusText: String(options.focusText || ""),
+    recentMessages,
+    speakerMemories,
+    relatedMembers,
+    relatedMemories,
+    groupMemories,
     recentMemories: allMemories,
   };
 }
@@ -215,6 +240,9 @@ export async function recentLineEvents(limit = 30): Promise<Record<string, unkno
       lineReplyStatus: data.lineReplyStatus || 0,
       lineReplyOk: Boolean(data.lineReplyOk),
       lineReplyError: data.lineReplyError || "",
+      classifierReason: data.classifierReason || "",
+      classifierConfidence: data.classifierConfidence || 0,
+      personalityMode: data.personalityMode || "",
       receivedAt: data.receivedAt?.toDate?.()?.toISOString?.() || "",
     };
   });
@@ -272,13 +300,13 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
   const primaryRows = rows.filter((row) => !primaryChatId || row.chatId === primaryChatId);
   const messageRows = primaryRows.filter((row) => row.eventType === "message");
   const repliedRows = messageRows.filter((row) => row.lineReplyOk);
-  const spontaneousRows = messageRows.filter((row) => row.status === "spontaneous_reply" && row.lineReplyOk);
+  const classifierRows = messageRows.filter((row) => ["classifier_reply", "spontaneous_reply"].includes(row.status) && row.lineReplyOk);
   const activeDays = distinctBangkokDays(messageRows);
   const todayKey = bangkokDateKey(new Date());
   const todayRows = messageRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
   const todayReplies = repliedRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
-  const todaySpontaneous = spontaneousRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
-  const hourlyToday = buildHourlyBuckets(todayRows, todayReplies, todaySpontaneous);
+  const todayClassifier = classifierRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
+  const hourlyToday = buildHourlyBuckets(todayRows, todayReplies, todayClassifier);
   const speakerStats = buildSpeakerStats(messageRows, memberNames);
   const totalCostUsd = primaryRows.reduce((sum, row) => sum + row.estimatedUsd, 0);
   const totalCostThb = primaryRows.reduce((sum, row) => sum + row.estimatedThb, 0);
@@ -291,7 +319,8 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
     totals: {
       receivedMessages: messageRows.length,
       repliedMessages: repliedRows.length,
-      spontaneousReplies: spontaneousRows.length,
+      spontaneousReplies: classifierRows.length,
+      classifierReplies: classifierRows.length,
       totalAiCalls: totalCalls,
       totalTokens,
       totalCostUsd,
@@ -305,10 +334,12 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
     today: {
       receivedMessages: todayRows.length,
       repliedMessages: todayReplies.length,
-      spontaneousReplies: todaySpontaneous.length,
+      spontaneousReplies: todayClassifier.length,
+      classifierReplies: todayClassifier.length,
       receivedTimes: todayRows.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
       repliedTimes: todayReplies.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
-      spontaneousTimes: todaySpontaneous.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
+      spontaneousTimes: todayClassifier.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
+      classifierTimes: todayClassifier.slice(0, 200).map((row) => (row.receivedAt as Date).toISOString()),
       firstReceivedAt: todayRows[0]?.receivedAt?.toISOString?.() || "",
       lastReceivedAt: todayRows[todayRows.length - 1]?.receivedAt?.toISOString?.() || "",
     },
@@ -334,13 +365,16 @@ export async function recentPublicMemories(limit = 30): Promise<Record<string, u
 
   const memories = await Promise.all(
     chatIds.map(async (chatId) => {
+      const names = await memberNameMap(chatId);
       const snap = await db.collection("lineGroups").doc(chatId).collection("memories").orderBy("createdAt", "desc").limit(limit).get();
       return snap.docs.map((doc) => {
         const memory = memoryFromDoc(doc.id, doc.data() as MemoryDoc);
+        const ownerUserIdHash = hashId(memory.ownerUserId);
         return {
           id: memory.id,
           chatIdHash: hashId(chatId),
-          ownerUserIdHash: hashId(memory.ownerUserId),
+          ownerUserIdHash,
+          ownerDisplayName: names.get(ownerUserIdHash) || `LINE-${ownerUserIdHash}`,
           category: memory.category,
           text: memory.text,
           confidence: memory.confidence,
@@ -356,15 +390,25 @@ export async function recentPublicMemories(limit = 30): Promise<Record<string, u
 export async function detailedPublicMemories(limit = 120): Promise<Record<string, unknown>> {
   const memories = await recentPublicMemories(limit);
   const byCategory = new Map<string, number>();
+  const byOwner = new Map<string, { ownerUserIdHash: string; ownerDisplayName: string; count: number }>();
   memories.forEach((memory) => {
     const category = String(memory.category || "note");
     byCategory.set(category, (byCategory.get(category) || 0) + 1);
+    const ownerUserIdHash = String(memory.ownerUserIdHash || "");
+    const ownerDisplayName = String(memory.ownerDisplayName || ownerUserIdHash || "Unknown");
+    const current = byOwner.get(ownerUserIdHash);
+    byOwner.set(ownerUserIdHash, {
+      ownerUserIdHash,
+      ownerDisplayName,
+      count: (current?.count || 0) + 1,
+    });
   });
   return {
     items: memories,
     categories: [...byCategory.entries()]
       .map(([category, count]) => ({ category, count }))
       .sort((left, right) => right.count - left.count),
+    owners: [...byOwner.values()].sort((left, right) => right.count - left.count),
   };
 }
 
@@ -503,4 +547,47 @@ function buildSpeakerStats(
       messageCount,
     }))
     .sort((left, right) => Number(right.messageCount) - Number(left.messageCount));
+}
+
+function findRelatedMembers(
+  members: GroupContext["members"],
+  currentUser: GroupContext["currentUser"],
+  focusText: string,
+  recentMessages: string[],
+): GroupContext["relatedMembers"] {
+  const combined = `${focusText}\n${recentMessages.join("\n")}`.toLowerCase();
+  const scored = members
+    .filter((member) => member.userId !== currentUser.userId)
+    .map((member) => {
+      const name = member.displayName.trim().toLowerCase();
+      if (!name) return { member, score: 0 };
+      const escaped = escapeRegExp(name);
+      const directMatches = (combined.match(new RegExp(escaped, "g")) || []).length;
+      const memoryMatches = member.memories
+        .slice(0, 6)
+        .reduce((sum, memory) => sum + ((focusText.toLowerCase().includes(memory.text.toLowerCase()) || combined.includes(memory.text.toLowerCase())) ? 1 : 0), 0);
+      return { member, score: directMatches * 2 + memoryMatches };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  return scored.slice(0, 4).map((item) => item.member);
+}
+
+function compareMemoryCreatedAt(left: MemberMemory, right: MemberMemory): number {
+  return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
+}
+
+function dedupeMemories(memories: MemberMemory[]): MemberMemory[] {
+  const seen = new Set<string>();
+  return memories.filter((memory) => {
+    const key = `${memory.ownerUserId}|${memory.category}|${memory.text}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

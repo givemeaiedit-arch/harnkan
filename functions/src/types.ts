@@ -57,17 +57,37 @@ export type GroupContext = {
   aliasPrefixes: string[];
   members: GroupMember[];
   currentUser: GroupMember;
+  focusText?: string;
+  recentMessages: string[];
+  speakerMemories: MemberMemory[];
+  relatedMembers: GroupMember[];
+  relatedMemories: MemberMemory[];
+  groupMemories: MemberMemory[];
   recentMemories: MemberMemory[];
 };
 
 export type AgentRoute = "general" | "memory" | "memory_show" | "memory_delete" | "split" | "horoscope" | "speech";
+
+export type PersonalityMode = "comedian" | "reporter" | "fortune_teller" | "judge" | "sports_commentator" | "neutral";
+
+export type ReplyIntent = "joke" | "comfort" | "opinion" | "summary" | "question" | "none";
+
+export type MessageClassification = {
+  shouldReply: boolean;
+  reason: string;
+  confidence: number;
+  personalityMode: PersonalityMode;
+  replyIntent: ReplyIntent;
+  usage?: TokenUsage;
+  cost?: CostEstimate;
+};
 
 export type ParsedCommand = {
   invoked: boolean;
   route: AgentRoute;
   text: string;
   rawPrefix: string;
-  trigger?: "mention" | "reply" | "spontaneous" | "";
+  trigger?: "mention" | "reply" | "classifier" | "";
 };
 
 export type AgentResult = {
@@ -151,4 +171,7 @@ export type AuditEvent = {
   lineReplyStatus?: number;
   lineReplyOk?: boolean;
   lineReplyError?: string;
+  classifierReason?: string;
+  classifierConfidence?: number;
+  personalityMode?: PersonalityMode;
 };

@@ -404,7 +404,7 @@
                       <small id="lineTodayRepliesTimes">-</small>
                     </div>
                     <div class="line-metric-card line-metric-card--spontaneous">
-                      <span>วันนี้ตอบเองไม่มีคนเรียก</span>
+                      <span>วันนี้ตอบจาก Classifier</span>
                       <strong id="lineTodaySpontaneousLabel">0</strong>
                       <small id="lineTodaySpontaneousTimes">-</small>
                     </div>
@@ -463,6 +463,20 @@
                         </div>
                       </div>
                       <div class="line-memory-meta">
+                        <div class="line-memory-summary-grid" id="lineMemorySummaryGrid"></div>
+                        <div class="line-memory-filters">
+                          <div class="line-memory-view-switch" id="lineMemoryViewSwitch"></div>
+                          <div class="line-memory-filter-row">
+                            <label class="line-memory-filter-field">
+                              <span>ดูของใคร</span>
+                              <select id="lineMemoryOwnerFilter"></select>
+                            </label>
+                            <label class="line-memory-filter-field">
+                              <span>หมวดความจำ</span>
+                              <select id="lineMemoryCategoryFilter"></select>
+                            </label>
+                          </div>
+                        </div>
                         <div class="line-memory-categories" id="lineMemoryCategoryList"></div>
                       </div>
                       <div class="line-memory-list line-memory-list--detailed" id="lineMemoryList"></div>
@@ -473,8 +487,9 @@
                 <article class="panel line-events-panel">
                   <div class="panel-title">
                     <span class="soft-icon purple"><i data-lucide="terminal"></i></span>
-                    <h2>เหตุการณ์ล่าสุด</h2>
+                    <h2>Event Decision Timeline</h2>
                   </div>
+                  <p class="line-panel-note">ติดตาม flow ล่าสุดของวิมล: รับข้อความ, จำข้อมูล, Classifier ตัดสินใจ, ตอบกลับ และค่าใช้จ่ายต่อ event</p>
                   <div class="line-events-list" id="lineEventsList"></div>
                 </article>
               </div>

@@ -1,10 +1,24 @@
-import type { AgentResult, AiModelOption, ChatTarget, CostEstimate, GroupContext, MemberMemory, ParsedCommand, ParsedSplitExpense, SilentMemoryResult, TokenUsage } from "./types";
+import type {
+  AgentResult,
+  AiModelOption,
+  ChatTarget,
+  CostEstimate,
+  GroupContext,
+  MemberMemory,
+  MessageClassification,
+  ParsedCommand,
+  ParsedSplitExpense,
+  PersonalityMode,
+  ReplyIntent,
+  SilentMemoryResult,
+  TokenUsage,
+} from "./types";
 import { createSplitExpense, deleteUserMemories, saveMemory } from "./repository";
 
 const harnkanUrl = "https://harnkan-givemeai-gpt-hub.web.app";
 const defaultUsdToThb = Number(process.env.USD_TO_THB_RATE || 32.9);
 const femalePersona =
-  "คุณคือวิมล ผู้ช่วย AI ผู้หญิงในกลุ่ม LINE พูดภาษาไทยแบบผู้หญิง ใช้คำลงท้ายค่ะ/นะคะ แทนตัวเองว่าวิมล ห้ามใช้คำว่า ผม หรือ ครับ น้ำเสียงสุภาพ อบอุ่น เป็นกันเอง ขี้เล่นเล็กน้อย และตอบให้เป็นธรรมชาติ";
+  "คุณคือ “วิมล” สมาชิกประจำกลุ่มเพื่อนใน LINE ไม่ใช่ผู้ช่วยทางการ บุคลิกกวน ฉลาด แซวไว อบอุ่น ไม่แรง เหมือนเพื่อนอีกคนในกลุ่ม พูดภาษาไทยแบบผู้หญิง แทนตัวเองว่าวิมล ใช้ค่ะ/นะคะได้อย่างเป็นธรรมชาติ ห้ามใช้คำว่า ผม หรือ ครับ ตอบสั้น 1-3 บรรทัด ห้ามด่ารุนแรง ห้ามล้อเรื่องอ่อนไหว ห้ามเปิดเผยข้อมูลส่วนตัว และใช้มุกจากความทรงจำกลุ่มได้เมื่อเหมาะ";
 
 export const aiModelOptions: AiModelOption[] = [
   { label: "GPT 5.4 mini", value: "gpt-5.4-mini", inputUsdPerMillion: 0.75, outputUsdPerMillion: 4.5 },
@@ -30,6 +44,14 @@ type CostTracker = {
   inputTokens: number;
   outputTokens: number;
   openAiCalls: number;
+};
+
+type ClassificationOutput = {
+  shouldReply: boolean;
+  reason: string;
+  confidence: number;
+  personalityMode: PersonalityMode;
+  replyIntent: ReplyIntent;
 };
 
 const wakeWords = ["@วิมล", "วิมล", "AI", "ai"];
@@ -119,6 +141,112 @@ export async function runAgentWorkflow(input: {
   }
 }
 
+export async function classifyMessageForReply(input: {
+  text: string;
+  context: GroupContext;
+  openaiApiKey: string;
+  model: string;
+}): Promise<MessageClassification> {
+  const tracker: CostTracker = { model: input.model, inputTokens: 0, outputTokens: 0, openAiCalls: 0 };
+  const fallback = (reason: string): MessageClassification => {
+    const usage = usageFromTracker(tracker);
+    return {
+      shouldReply: false,
+      reason,
+      confidence: 0,
+      personalityMode: "neutral",
+      replyIntent: "none",
+      usage,
+      cost: estimateCost(usage),
+    };
+  };
+
+  const clean = input.text.trim();
+  if (!clean || isSensitiveText(clean)) return fallback("empty_or_sensitive");
+
+  const schema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      shouldReply: { type: "boolean" },
+      reason: { type: "string" },
+      confidence: { type: "number" },
+      personalityMode: {
+        type: "string",
+        enum: ["comedian", "reporter", "fortune_teller", "judge", "sports_commentator", "neutral"],
+      },
+      replyIntent: {
+        type: "string",
+        enum: ["joke", "comfort", "opinion", "summary", "question", "none"],
+      },
+    },
+    required: ["shouldReply", "reason", "confidence", "personalityMode", "replyIntent"],
+  };
+
+  const result = await createJsonCompletion<ClassificationOutput>(input.openaiApiKey, input.model, schema, [
+    {
+      role: "system",
+      content:
+        "คุณคือ Message Classifier ของวิมลในกลุ่ม LINE หน้าที่คือเลือกว่าจะตอบหรือเงียบ ถ้าไม่ได้มีจังหวะจริงให้ shouldReply=false บอทไม่ควรตอบทุกข้อความ ให้ตอบเฉพาะเมื่อข้อความตลก มีอารมณ์ชัด ถามความเห็น พูดถึงเรื่องที่วิมลมี memory เกี่ยวข้อง มี inside joke หรือมีจังหวะแซวที่สุภาพได้ ห้ามตอบเมื่อเป็นเรื่องส่วนตัวอ่อนไหว ทะเลาะแรง ข้อมูลลับ หรือบทสนทนาทั่วไปที่ไม่ต้องมีบอท",
+    },
+    {
+      role: "user",
+      content:
+        `${conversationContextSummary(input.context)}\n\n` +
+        `ข้อความล่าสุด: ${clean}\n\n` +
+        "ตัดสินใจแบบเข้มงวด ถ้า confidence ต่ำกว่า 0.62 ให้ shouldReply=false",
+    },
+  ], tracker);
+
+  const usage = usageFromTracker(tracker);
+  const confidence = clamp(Number(result?.confidence || 0), 0, 1);
+  const shouldReply = Boolean(result?.shouldReply) && confidence >= 0.62;
+  return {
+    shouldReply,
+    reason: String(result?.reason || (shouldReply ? "classifier_reply" : "classifier_no_reply")).slice(0, 180),
+    confidence,
+    personalityMode: normalizePersonalityMode(result?.personalityMode),
+    replyIntent: normalizeReplyIntent(result?.replyIntent),
+    usage,
+    cost: estimateCost(usage),
+  };
+}
+
+export async function runClassifierReply(input: {
+  currentText: string;
+  classification: MessageClassification;
+  context: GroupContext;
+  target: ChatTarget;
+  openaiApiKey: string;
+  model: string;
+}): Promise<AgentResult> {
+  const tracker: CostTracker = { model: input.model, inputTokens: 0, outputTokens: 0, openAiCalls: 0 };
+  const reply = await createTextCompletion(input.openaiApiKey, input.model, [
+    {
+      role: "system",
+      content:
+        `${femalePersona} ตอนนี้วิมลตอบเพราะ Message Classifier เห็นว่ามีจังหวะเหมาะ ไม่ใช่เพราะมีคนเรียกชื่อ จึงต้องตอบให้สั้น เป็นธรรมชาติ และไม่แย่งซีน โหมดบุคลิก: ${personalityModeInstruction(input.classification.personalityMode)} เจตนาคำตอบ: ${replyIntentInstruction(input.classification.replyIntent)}`,
+    },
+    {
+      role: "user",
+      content:
+        `${conversationContextSummary(input.context)}\n\n` +
+        `เหตุผลที่ควรตอบ: ${input.classification.reason}\n` +
+        `ข้อความล่าสุด: ${input.currentText}\n\n` +
+        "เขียนคำตอบภาษาไทย 1-3 บรรทัด แบบเพื่อนในกลุ่ม หลีกเลี่ยงมุกแรงและข้อมูลส่วนตัว",
+    },
+  ], tracker);
+  const usage = usageFromTracker(tracker);
+  return {
+    reply: safetyReview(reply || "วิมลขอเสริมเบา ๆ ว่าจังหวะนี้น่าจะคุยกันให้ชัดขึ้นนิดนึงนะคะ"),
+    route: "general",
+    agent: "ClassifierReplyAgent",
+    status: "ok",
+    usage,
+    cost: estimateCost(usage),
+  };
+}
+
 async function runGeneralChatAgent(text: string, context: GroupContext, openaiApiKey: string, model: string, tracker: CostTracker): Promise<AgentResult> {
   const reply = await createTextCompletion(openaiApiKey, model, [
     {
@@ -128,7 +256,7 @@ async function runGeneralChatAgent(text: string, context: GroupContext, openaiAp
     },
     {
       role: "user",
-      content: `ผู้พูด: ${context.currentUser.displayName}\nความจำที่เกี่ยวข้อง:\n${memorySummary(context)}\n\nข้อความ: ${text}`,
+      content: `${conversationContextSummary(context)}\n\nข้อความ: ${text}`,
     },
   ], tracker);
 
@@ -173,8 +301,10 @@ async function runMemoryAgent(
 }
 
 function runMemoryShowAgent(context: GroupContext): AgentResult {
-  const memories = context.currentUser.memories;
-  if (!memories.length) {
+  const memories = context.speakerMemories;
+  const related = context.relatedMemories;
+  const groupMemories = context.groupMemories.slice(0, 8);
+  if (!memories.length && !related.length && !groupMemories.length) {
     return {
       reply: "ตอนนี้วิมลยังไม่มีข้อมูลที่จำเกี่ยวกับคุณในกลุ่มนี้ค่ะ",
       route: "memory_show",
@@ -183,7 +313,10 @@ function runMemoryShowAgent(context: GroupContext): AgentResult {
     };
   }
   return {
-    reply: `ข้อมูลที่วิมลจำเกี่ยวกับคุณในกลุ่มนี้:\n${memories.map((memory) => `- ${memory.text}`).join("\n")}`,
+    reply:
+      `ข้อมูลที่วิมลจำเกี่ยวกับคุณในกลุ่มนี้:\n${sectionLines(memories)}` +
+      (related.length ? `\n\nข้อมูลของคนที่เกี่ยวข้องในบทสนทนาล่าสุด:\n${sectionLines(related)}` : "") +
+      (groupMemories.length ? `\n\nบริบทกลุ่มที่เกี่ยวข้อง:\n${sectionLines(groupMemories)}` : ""),
     route: "memory_show",
     agent: "MemoryAgent",
     status: "ok",
@@ -246,7 +379,7 @@ async function runHoroscopeAgent(text: string, context: GroupContext, openaiApiK
     },
     {
       role: "user",
-      content: `ผู้พูด: ${context.currentUser.displayName}\nความจำ:\n${memorySummary(context)}\n\nคำขอ: ${text}`,
+      content: `${conversationContextSummary(context)}\n\nคำขอ: ${text}`,
     },
   ], tracker);
   return {
@@ -266,7 +399,7 @@ async function runSpeechAnalysisAgent(text: string, context: GroupContext, opena
     },
     {
       role: "user",
-      content: `ผู้พูด: ${context.currentUser.displayName}\nข้อความให้วิเคราะห์: ${text}`,
+      content: `${conversationContextSummary(context)}\n\nข้อความให้วิเคราะห์: ${text}`,
     },
   ], tracker);
   return {
@@ -324,41 +457,6 @@ export async function rememberSilentlyFromMessage(input: {
   };
 }
 
-export async function runSpontaneousComment(input: {
-  currentText: string;
-  recentMessages: string[];
-  context: GroupContext;
-  target: ChatTarget;
-  openaiApiKey: string;
-  model: string;
-}): Promise<AgentResult> {
-  const tracker: CostTracker = { model: input.model, inputTokens: 0, outputTokens: 0, openAiCalls: 0 };
-  const reply = await createTextCompletion(input.openaiApiKey, input.model, [
-    {
-      role: "system",
-      content:
-        `${femalePersona} โหมดนี้คือการออกความคิดเห็นเองในกลุ่มแบบสุภาพ ไม่ต้องยาว ไม่ขัดจังหวะ ถ้าไม่มีประเด็นจริงให้ตอบสั้นมาก หลีกเลี่ยงการตัดสินคน และอย่าอ้างว่ารู้เรื่องที่ไม่มีในบริบท`,
-    },
-    {
-      role: "user",
-      content:
-        `ผู้พูดล่าสุด: ${input.context.currentUser.displayName}\n` +
-        `ความจำที่เกี่ยวข้อง:\n${memorySummary(input.context)}\n\n` +
-        `บริบทย้อนหลัง 10 ข้อความ:\n${input.recentMessages.map((message, index) => `${index + 1}. ${message}`).join("\n")}\n\n` +
-        `ข้อความล่าสุด: ${input.currentText}\n\n` +
-        "ถ้าเหมาะจะออกความเห็น ให้ตอบเป็นความเห็นสุภาพ 1-2 ประโยค ถ้าไม่จำเป็น ให้ตอบเป็นข้อสังเกตสั้น ๆ ที่มีประโยชน์",
-    },
-  ], tracker);
-  const usage = usageFromTracker(tracker);
-  return {
-    reply: safetyReview(reply || "วิมลขอเสริมเบา ๆ ว่าคุยกันชัด ๆ น่าจะช่วยให้เข้าใจกันง่ายขึ้นค่ะ"),
-    route: "general",
-    agent: "SpontaneousContextAgent",
-    status: "ok",
-    usage,
-    cost: estimateCost(usage),
-  };
-}
 
 async function extractMemories(
   text: string,
@@ -399,7 +497,7 @@ async function extractMemories(
     },
     {
       role: "user",
-      content: `สมาชิกที่รู้จัก: ${context.members.map((member) => member.displayName).join(", ")}\nผู้พูด: ${context.currentUser.displayName}\nข้อความ: ${text}`,
+      content: `${conversationContextSummary(context)}\n\nสมาชิกที่รู้จัก: ${context.members.map((member) => member.displayName).join(", ")}\nข้อความ: ${text}`,
     },
   ], tracker);
 
@@ -444,7 +542,7 @@ async function parseSplitExpense(
     },
     {
       role: "user",
-      content: `สมาชิกที่รู้จัก: ${context.members.map((member) => member.displayName).join(", ")}\nข้อความ: ${text}`,
+      content: `${conversationContextSummary(context)}\n\nสมาชิกที่รู้จัก: ${context.members.map((member) => member.displayName).join(", ")}\nข้อความ: ${text}`,
     },
   ], tracker);
 
@@ -562,9 +660,66 @@ function userIdForName(name: string, context: GroupContext): string {
   return context.members.find((member) => member.displayName.toLowerCase() === clean)?.userId || "";
 }
 
-function memorySummary(context: GroupContext): string {
-  const memories = context.recentMemories.slice(0, 12).map((memory) => `- ${memory.text}`);
-  return memories.join("\n") || "- ยังไม่มีความจำในกลุ่มนี้";
+function memoryListSummary(memories: MemberMemory[]): string {
+  const rows = memories.slice(0, 12).map((memory) => `- ${memory.text}`);
+  return rows.join("\n") || "- ไม่มี";
+}
+
+function conversationContextSummary(context: GroupContext, fallbackRecentMessages: string[] = []): string {
+  const recentMessages = (context.recentMessages.length ? context.recentMessages : fallbackRecentMessages).slice(-10);
+  const relatedNames = context.relatedMembers.map((member) => member.displayName).join(", ") || "- ไม่มี";
+  return [
+    `ผู้พูดหลัก: ${context.currentUser.displayName}`,
+    `ข้อความโฟกัส: ${context.focusText || "-"}`,
+    `บริบทย้อนหลังล่าสุด:\n${messageListSummary(recentMessages)}`,
+    `Memory รายบุคคลของผู้พูด:\n${memoryListSummary(context.speakerMemories)}`,
+    `คนที่เกี่ยวข้องในบทสนทนานี้: ${relatedNames}`,
+    `Memory รายบุคคลของคนที่เกี่ยวข้อง:\n${memoryListSummary(context.relatedMemories)}`,
+    `Memory กลุ่ม:\n${memoryListSummary(context.groupMemories)}`,
+  ].join("\n\n");
+}
+
+function messageListSummary(messages: string[]): string {
+  if (!messages.length) return "- ไม่มี";
+  return messages.map((message, index) => `${index + 1}. ${message}`).join("\n");
+}
+
+function sectionLines(memories: MemberMemory[]): string {
+  return memories.map((memory) => `- ${memory.text}`).join("\n");
+}
+
+function normalizePersonalityMode(value: unknown): PersonalityMode {
+  const allowed: PersonalityMode[] = ["comedian", "reporter", "fortune_teller", "judge", "sports_commentator", "neutral"];
+  return allowed.includes(value as PersonalityMode) ? (value as PersonalityMode) : "neutral";
+}
+
+function normalizeReplyIntent(value: unknown): ReplyIntent {
+  const allowed: ReplyIntent[] = ["joke", "comfort", "opinion", "summary", "question", "none"];
+  return allowed.includes(value as ReplyIntent) ? (value as ReplyIntent) : "none";
+}
+
+function personalityModeInstruction(mode: PersonalityMode): string {
+  const instructions: Record<PersonalityMode, string> = {
+    comedian: "แซวขำ ๆ แบบเพื่อน กวนได้แต่ไม่แรง",
+    reporter: "เล่าเหมือนรายงานข่าวสั้น ๆ ขำ ๆ",
+    fortune_teller: "เล่นเป็นหมอดูสายบันเทิง ห้ามจริงจังเรื่องเงิน สุขภาพ หรือกฎหมาย",
+    judge: "เล่นเป็นกรรมการตัดสินแบบขำ ๆ ไม่กล่าวหาใครจริง",
+    sports_commentator: "พากย์เหมือนกีฬา สนุกและกระชับ",
+    neutral: "ตอบเป็นเพื่อนธรรมชาติ ไม่ต้องเล่นบทชัด",
+  };
+  return instructions[mode];
+}
+
+function replyIntentInstruction(intent: ReplyIntent): string {
+  const instructions: Record<ReplyIntent, string> = {
+    joke: "ต่อมุกให้สั้นและปลอดภัย",
+    comfort: "ปลอบหรือซัพพอร์ตแบบเพื่อน",
+    opinion: "ให้ความเห็นสุภาพ ไม่ฟันธงเกินไป",
+    summary: "สรุปสั้น ๆ ให้กลุ่มเข้าใจง่าย",
+    question: "ถามกลับสั้น ๆ เพื่อให้คุยต่อ",
+    none: "ถ้าจำเป็นต้องตอบ ให้ตอบกลาง ๆ และสั้นมาก",
+  };
+  return instructions[intent];
 }
 
 function formatBaht(amount: number): string {
@@ -617,6 +772,7 @@ function ratesForModel(model: string): { inputUsdPerMillion: number; outputUsdPe
   const option = aiModelOptions.find((item) => item.value.toLowerCase() === normalized);
   if (option) return { inputUsdPerMillion: option.inputUsdPerMillion, outputUsdPerMillion: option.outputUsdPerMillion };
   if (normalized.includes("gpt-4o-mini")) return { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 };
+  if (normalized.includes("gpt-4.1-nano")) return { inputUsdPerMillion: 0.1, outputUsdPerMillion: 0.4 };
   if (normalized.includes("gpt-4.1-mini")) return { inputUsdPerMillion: 0.4, outputUsdPerMillion: 1.6 };
   if (normalized.includes("gpt-5.4-mini")) return { inputUsdPerMillion: 0.75, outputUsdPerMillion: 4.5 };
   return { inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 };
