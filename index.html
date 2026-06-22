@@ -38,6 +38,9 @@
           <button class="nav-item" data-view="line">
             <i data-lucide="bot"></i><span>LINE OA Webhook</span>
           </button>
+          <button class="nav-item" data-view="dashboard">
+            <i data-lucide="layout-dashboard"></i><span>Dashboard AI</span>
+          </button>
         </nav>
 
         <div class="share-box">
@@ -327,20 +330,20 @@
                   <div class="line-status-card">
                     <span>สถานะ Secret / Token</span>
                     <strong id="lineConfigStatusLabel">-</strong>
-                    <small>อ่านจาก environment ของ `server.py` เท่านั้น</small>
+                    <small>อ่านจาก Firebase Functions secrets หรือ environment ของ backend</small>
                   </div>
                 </div>
 
                 <div class="line-warning">
                   <i data-lucide="circle-help"></i>
-                  <span>LINE OA ต้องใช้ Webhook URL แบบ HTTPS ที่เข้าถึงจากอินเทอร์เน็ตได้ GitHub Pages เป็น static site จึงรับ webhook โดยตรงไม่ได้ ต้อง deploy `server.py` หรือ backend ตัวนี้ไว้บน public HTTPS ก่อน</span>
+                  <span>LINE OA ต้องใช้ Webhook URL แบบ HTTPS ที่เข้าถึงจากอินเทอร์เน็ตได้ หน้านี้ใช้สำหรับตั้งค่า Webhook ส่วนสถิติและ Event แยกไปอยู่ที่เมนู Dashboard AI</span>
                 </div>
 
                 <div class="line-command-box">
                   <div class="section-head">
                     <div>
-                      <b>ตั้งค่า server.py</b>
-                      <span>ใส่ Channel Secret และ Channel Access Token ในเครื่อง/โฮสต์ backend แล้ว restart server</span>
+                      <b>ตั้งค่า Backend secrets</b>
+                      <span>ใส่ Channel Secret และ Channel Access Token ใน Firebase Functions หรือโฮสต์ backend แล้ว deploy/restart</span>
                     </div>
                     <button class="text-action" id="copyLineEnvBtn" type="button"><i data-lucide="copy"></i>คัดลอกคำสั่ง</button>
                   </div>
@@ -357,6 +360,10 @@
                 </div>
               </article>
 
+            </div>
+          </section>
+
+          <section class="view" id="view-dashboard" aria-label="Dashboard AI วิมล">
               <div class="line-dashboard-stack">
                 <article class="panel line-dashboard-panel">
                   <div class="panel-title">
@@ -518,7 +525,6 @@
                   <div class="line-events-list" id="lineEventsList"></div>
                 </article>
               </div>
-            </div>
           </section>
         </main>
       </div>
@@ -532,6 +538,7 @@
       <button class="bottom-item" data-view="rules"><i data-lucide="settings"></i><span>เงื่อนไข</span></button>
       <button class="bottom-item" data-view="history"><i data-lucide="archive"></i><span>ย้อนหลัง</span></button>
       <button class="bottom-item" data-view="line"><i data-lucide="bot"></i><span>LINE</span></button>
+      <button class="bottom-item" data-view="dashboard"><i data-lucide="layout-dashboard"></i><span>AI</span></button>
     </nav>
 
     <div class="detail-modal" id="settlementDetailModal" aria-hidden="true">

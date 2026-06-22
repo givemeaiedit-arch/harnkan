@@ -1959,7 +1959,7 @@ function renderLineWebhookPage() {
   const webhookLabel = $("#lineWebhookUrlLabel");
   if (!webhookLabel) return;
   webhookLabel.textContent = lineWebhookUrl();
-  $("#lineRuntimeLabel").textContent = isGithubPagesHost() ? "GitHub Pages" : "Server mode";
+  $("#lineRuntimeLabel").textContent = isGithubPagesHost() ? "GitHub Pages" : "Firebase / Server mode";
   $("#lineRuntimeHelp").textContent = isGithubPagesHost()
     ? "หน้านี้เป็น static site จึงใช้ดูคู่มือ/คัดลอกคำสั่งได้ แต่รับ webhook จริงไม่ได้"
     : "พร้อมใช้ endpoint บน origin นี้ ถ้าเปิดจาก public HTTPS";
@@ -1967,15 +1967,24 @@ function renderLineWebhookPage() {
   $("#lineConfigStatusLabel").textContent = "กำลังตรวจสอบ...";
   if (isGithubPagesHost()) {
     $("#lineConfigStatusLabel").textContent = "ต้อง deploy backend";
-    renderLineDashboardUnavailable("GitHub Pages ไม่มี backend สำหรับรับ LINE webhook โดยตรง");
     return;
   }
-  refreshLineStatus();
+  refreshLineStatus({ includeDashboard: false });
 }
 
-async function refreshLineStatus() {
+function renderLineDashboardPage() {
   if (isGithubPagesHost()) {
-    renderLineWebhookPage();
+    renderLineDashboardUnavailable("GitHub Pages ไม่มี backend สำหรับอ่าน Dashboard AI วิมล");
+    return;
+  }
+  refreshLineStatus({ includeDashboard: true });
+}
+
+async function refreshLineStatus(options = {}) {
+  const includeDashboard = options.includeDashboard !== false;
+  if (isGithubPagesHost()) {
+    if (includeDashboard) renderLineDashboardUnavailable("GitHub Pages ไม่มี backend สำหรับอ่าน Dashboard AI วิมล");
+    else renderLineWebhookPage();
     return;
   }
   try {
@@ -1989,7 +1998,7 @@ async function refreshLineStatus() {
   } catch {
     $("#lineConfigStatusLabel").textContent = "เชื่อม server ไม่ได้";
   }
-  await refreshLineEvents();
+  if (includeDashboard) await refreshLineEvents();
 }
 
 function renderLineModelConfig(config) {
@@ -2694,7 +2703,7 @@ async function saveLineAiModel() {
     if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
     showToast("บันทึก Model AI แล้ว");
     if (result) result.textContent = `บันทึก Model AI แล้ว: ${data.config?.modelLabel || select.value}`;
-    await refreshLineStatus();
+    await refreshLineStatus({ includeDashboard: true });
   } catch (error) {
     if (result) result.textContent = `บันทึก Model AI ไม่สำเร็จ: ${error.message}`;
   }
@@ -2810,7 +2819,7 @@ async function saveLineConfigToServer() {
     if (!response.ok || !data.ok) throw new Error(data.error || `HTTP ${response.status}`);
     showToast("บันทึก LINE config ลง server แล้ว");
     result.textContent = "บันทึก LINE config แล้ว พร้อมทดสอบ webhook";
-    await refreshLineStatus();
+    await refreshLineStatus({ includeDashboard: true });
   } catch (error) {
     result.textContent = `บันทึก config ไม่สำเร็จ: ${error.message}`;
   }
@@ -2861,7 +2870,8 @@ function renderAll() {
   renderMembers();
   renderSettlements();
   renderHistory();
-  renderLineWebhookPage();
+  if (currentView === "line") renderLineWebhookPage();
+  if (currentView === "dashboard") renderLineDashboardPage();
   renderTimeExample();
   renderParticipantEditor(getEditingExpense());
   renderIcons();
@@ -2876,6 +2886,8 @@ function setView(view) {
   document.querySelectorAll("[data-nav] button").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === view);
   });
+  if (view === "line") renderLineWebhookPage();
+  if (view === "dashboard") renderLineDashboardPage();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -3107,7 +3119,7 @@ function bindEvents() {
     if (copyLineWebhookButton) copyLineWebhookUrl();
     if (copyLineEnvButton) copyLineEnvCommand();
     if (copyLineCurlButton) copyLineCurlCommand();
-    if (refreshLineButton) refreshLineStatus();
+    if (refreshLineButton) renderLineDashboardPage();
     if (testLineButton) testLineWebhook();
     if (saveLineConfigButton) saveLineConfigToServer();
     if (saveLineAiModelButton) saveLineAiModel();
