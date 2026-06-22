@@ -1557,6 +1557,16 @@ button {
   color: var(--red) !important;
 }
 
+.line-event-step--warning {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(255, 251, 235, 0.92);
+}
+
+.line-event-step--warning > span {
+  background: #fef3c7;
+  color: #b45309 !important;
+}
+
 .line-event-content-grid {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr);
@@ -1678,6 +1688,16 @@ button {
   color: var(--red) !important;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.line-event-alert--warning {
+  border-color: rgba(245, 158, 11, 0.22);
+  background: rgba(255, 251, 235, 0.94);
+}
+
+.line-event-alert--warning b,
+.line-event-alert--warning span {
+  color: #b45309 !important;
 }
 
 .line-event-error {

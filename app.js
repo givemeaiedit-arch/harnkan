@@ -2355,6 +2355,7 @@ function lineEventMarkup(entry) {
   const statusMeta = lineEventStatusMeta(entry);
   const replyHint = lineReplyHint(entry);
   const errorHint = lineEventErrorHint(entry);
+  const issueTone = lineEventIssueTone(entry);
   const tokenText = `${formatInteger(entry.inputTokens || 0)} in / ${formatInteger(entry.outputTokens || 0)} out`;
   const costText = `${formatUsd(entry.estimatedUsd || 0)} • ${formatThb(entry.estimatedThb || 0)}`;
   const messagePreview = entry.messagePreview || first.messagePreview || "";
@@ -2420,7 +2421,7 @@ function lineEventMarkup(entry) {
         </div>
 
         ${entry.errorCode || issues.length ? `
-          <div class="line-event-alert">
+          <div class="line-event-alert line-event-alert--${escapeHtml(issueTone)}">
             ${entry.errorCode ? `<b>Error: ${escapeHtml(entry.errorCode)}</b>` : ""}
             ${issues.map((issue) => `<span>${escapeHtml(issue)}</span>`).join("")}
           </div>
@@ -2437,6 +2438,9 @@ function lineEventStatusMeta(entry) {
   if (status.includes("silent_memory")) return { className: "memory", label: "จำเงียบ" };
   if (status.includes("ignored")) return { className: "idle", label: "ไม่ใช่ข้อความ" };
   if (status === "missing_reply_token") return { className: "warning", label: "ไม่มี reply token" };
+  if (Number(entry.lineReplyStatus || 0) === 400 && entry.errorCode === "LINE_REPLY_400") {
+    return { className: "warning", label: "token ซ้ำ/หมดอายุ" };
+  }
   if (status.includes("failed") || status === "error" || entry.errorCode || (entry.lineReplyStatus && !entry.lineReplyOk)) {
     return { className: "error", label: "ผิดพลาด" };
   }
@@ -2462,10 +2466,26 @@ function lineEventFlowSteps(entry) {
     {
       index: "4",
       title: "ตอบกลับ LINE",
-      detail: hasReply ? `ส่งสำเร็จ HTTP ${entry.lineReplyStatus || 200}` : (entry.lineReplyStatus ? `ส่งไม่สำเร็จ HTTP ${entry.lineReplyStatus}` : "ไม่ได้ส่งข้อความกลับ"),
-      tone: hasReply ? "ok" : (entry.lineReplyStatus ? "error" : "idle"),
+      detail: hasReply
+        ? `ส่งสำเร็จ HTTP ${entry.lineReplyStatus || 200}`
+        : lineReplyStepDetail(entry),
+      tone: hasReply ? "ok" : lineReplyStepTone(entry),
     },
   ];
+}
+
+function lineReplyStepDetail(entry) {
+  if (Number(entry.lineReplyStatus || 0) === 400 && entry.errorCode === "LINE_REPLY_400") {
+    return "LINE 400: replyToken ใช้ไม่ได้ อาจเป็น event ซ้ำหรือเคยตอบไปแล้ว";
+  }
+  if (entry.lineReplyStatus) return `ส่งกลับไม่สำเร็จ HTTP ${entry.lineReplyStatus}`;
+  return "ไม่ได้ส่งข้อความกลับ";
+}
+
+function lineReplyStepTone(entry) {
+  if (Number(entry.lineReplyStatus || 0) === 400 && entry.errorCode === "LINE_REPLY_400") return "warning";
+  if (entry.lineReplyStatus) return "error";
+  return "idle";
 }
 
 function lineRouteLabel(route) {
@@ -2491,10 +2511,15 @@ function lineEventErrorHint(entry) {
 function lineReplyHint(entry) {
   if (!entry.lineReplyStatus || entry.lineReplyOk) return "";
   const detail = entry.lineReplyError ? ` • ${entry.lineReplyError}` : "";
-  if (entry.lineReplyStatus === 400) return "LINE 400: ตอบกลับไม่ทัน/เป็น event เก่าหรือ event ทดสอบ จึงใช้ replyToken ไม่ได้";
+  if (entry.lineReplyStatus === 400) return "LINE 400: replyToken ใช้ไม่ได้ มักเกิดจาก event ซ้ำ, event เก่า, event ทดสอบ หรือมีการตอบไปแล้วจาก event ก่อนหน้า";
   if (entry.lineReplyStatus === 401) return `LINE 401: Channel Access Token ไม่ถูกต้องหรือหมดอายุ${detail}`;
   if (entry.lineReplyStatus === 429) return `LINE 429: ส่งข้อความถี่เกินโควตา${detail}`;
   return `LINE ${entry.lineReplyStatus}: ส่งกลับไม่สำเร็จ${detail}`;
+}
+
+function lineEventIssueTone(entry) {
+  if (Number(entry.lineReplyStatus || 0) === 400 && entry.errorCode === "LINE_REPLY_400") return "warning";
+  return "error";
 }
 
 async function saveLineAiModel() {
