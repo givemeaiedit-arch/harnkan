@@ -7,6 +7,7 @@ import {
   aiUsageSummary,
   detailedPublicMemories,
   getAiRuntimeConfig,
+  getGroupBotEnabled,
   getGroupContext,
   groupMemoriesForAdmin,
   isReplyToKnownBotMessage,
@@ -16,6 +17,7 @@ import {
   recentLineEvents,
   recordBotReplyMessages,
   recordAudit,
+  setGroupBotEnabled,
   setAiRuntimeModel,
 } from "./repository";
 import type { AuditEvent, CostEstimate, LineEvent, LineWebhookBody, TokenUsage } from "./types";
@@ -121,7 +123,7 @@ export const lineConfig = onRequest(
       openaiApiKeyConfigured: Boolean(secretValue(openaiApiKey.value())),
       aiReplyEnabled: true,
       memoryBackend: "firestore",
-      activation: "วิมล / @วิมล / AI / reply ข้อความของวิมล / Classifier เลือกตอบเมื่อมีจังหวะเหมาะ",
+      activation: "วิมล / @วิมล / AI / reply ข้อความของวิมล / วิมล ปิดระบบ / วิมล เปิดระบบ",
       aiModel: aiConfig.model,
       aiModelLabel: aiConfig.modelLabel,
       classifierModel,
@@ -206,6 +208,50 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   const profile = await fetchLineProfile(channelAccessToken, target.source);
   await ensureLineIdentity(target, profile);
   await recordConversationMessage(target, profile, event.message.text || "", event);
+  const systemCommand = parseSystemControlCommand(event.message.text || "");
+  if (systemCommand) {
+    await setGroupBotEnabled(target, systemCommand.enabled);
+    const replyToken = event.replyToken || "";
+    const replyText = systemCommand.enabled
+      ? "เปิดระบบวิมลแล้วค่ะ ต่อจากนี้วิมลจะกลับมาตอบและจดจำบริบทในกลุ่มนี้นะคะ"
+      : "ปิดระบบวิมลแล้วค่ะ วิมลจะหยุดตอบและหยุดสกัดความจำใหม่ในกลุ่มนี้ จนกว่าจะพิมพ์ว่า “วิมล เปิดระบบ”";
+    const response = replyToken ? await replyToLine(channelAccessToken, replyToken, replyText) : null;
+    const lineReplyError = response && !response.ok ? await safeResponseText(response) : "";
+    await safeRecordAudit({
+      chatId: target.chatId,
+      chatType: target.chatType,
+      userIdHash: hashId(target.userId),
+      eventType: "message",
+      messagePreview,
+      trigger: "mention",
+      route: "settings",
+      agent: "SystemControlAgent",
+      status: systemCommand.enabled ? "bot_enabled" : "bot_disabled",
+      latencyMs: Date.now() - webhookStarted,
+      errorCode: response && !response.ok ? `LINE_REPLY_${response.status}` : "",
+      lineReplyStatus: response?.status || 0,
+      lineReplyOk: Boolean(response?.ok),
+      lineReplyError,
+    });
+    return { ok: Boolean(response?.ok ?? true), status: response?.status, route: "settings", agent: "SystemControlAgent", replied: Boolean(response) };
+  }
+
+  const botEnabled = await getGroupBotEnabled(target);
+  if (!botEnabled) {
+    await safeRecordAudit({
+      chatId: target.chatId,
+      chatType: target.chatType,
+      userIdHash: hashId(target.userId),
+      eventType: "message",
+      messagePreview,
+      route: "settings",
+      agent: "SystemControlAgent",
+      status: "bot_off_ignored",
+      latencyMs: Date.now() - started,
+    });
+    return { ok: true, route: "settings", agent: "SystemControlAgent", replied: false };
+  }
+
   const invokedByReply = await isReplyToKnownBotMessage(target, event);
   const command = parseCommand(event.message.text || "", { invokedByReply });
 
@@ -433,6 +479,15 @@ function silentMemoryStatus(status: string): string {
   if (status === "skipped") return "silent_memory_skipped";
   if (status === "error") return "silent_memory_error";
   return "silent_memory_scanned";
+}
+
+function parseSystemControlCommand(text: string): { enabled: boolean } | null {
+  const clean = String(text || "").trim().toLowerCase();
+  const hasWakeWord = /(^|\s)(@?วิมล|ai)(\s|$)/i.test(clean);
+  if (!hasWakeWord) return null;
+  if (/(เปิดระบบ|เปิด\s*ai|เปิด\s*วิมล|start|enable)/i.test(clean)) return { enabled: true };
+  if (/(ปิดระบบ|ปิด\s*ai|ปิด\s*วิมล|stop|disable)/i.test(clean)) return { enabled: false };
+  return null;
 }
 
 function mergeUsage(first: TokenUsage | undefined, second: TokenUsage | undefined): TokenUsage {

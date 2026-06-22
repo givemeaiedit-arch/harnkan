@@ -26,7 +26,6 @@ export async function ensureLineIdentity(target: ChatTarget, profile: LineProfil
       {
         chatType: target.chatType,
         aliases: defaultAliases,
-        botEnabled: true,
         updatedAt: now,
         createdAt: now,
       },
@@ -53,6 +52,24 @@ export async function ensureLineIdentity(target: ChatTarget, profile: LineProfil
       { merge: true },
     ),
   ]);
+}
+
+export async function getGroupBotEnabled(target: ChatTarget): Promise<boolean> {
+  const snap = await db.collection("lineGroups").doc(target.chatId).get();
+  const value = snap.get("botEnabled");
+  return value !== false;
+}
+
+export async function setGroupBotEnabled(target: ChatTarget, enabled: boolean): Promise<void> {
+  await db.collection("lineGroups").doc(target.chatId).set(
+    {
+      botEnabled: enabled,
+      botStatusUpdatedBy: target.userId,
+      botStatusUpdatedAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
 }
 
 export async function recordConversationMessage(target: ChatTarget, profile: LineProfile | null, text: string, event: LineEvent): Promise<void> {

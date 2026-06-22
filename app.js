@@ -2536,6 +2536,7 @@ function lineRouteLabel(route) {
     split: "หารค่าใช้จ่าย",
     horoscope: "ดูดวง",
     speech: "วิเคราะห์คำพูด",
+    settings: "ตั้งค่าระบบ",
   };
   return labels[route] || route || "-";
 }
