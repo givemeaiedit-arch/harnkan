@@ -30,6 +30,7 @@ const openaiApiKey = defineSecret("OPENAI_API_KEY");
 const defaultOpenAiModel = process.env.OPENAI_MODEL || "gpt-5.4-mini";
 const classifierModel = process.env.CLASSIFIER_MODEL || "gpt-4.1-nano";
 const adminApiKey = process.env.AI_ADMIN_KEY || "";
+const creatorUserIdHash = "733b9dbc996a";
 
 type EventResult = {
   ok: boolean;
@@ -229,13 +230,13 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   const profile = await fetchLineProfile(channelAccessToken, target.source);
   await ensureLineIdentity(target, profile);
   await recordConversationMessage(target, profile, event.message.text || "", event);
-  const systemCommand = parseSystemControlCommand(event.message.text || "");
-  if (systemCommand) {
-    await setGroupBotEnabled(target, systemCommand.enabled);
+  const technicalCommand = parseTechnicalCommand(event.message.text || "");
+  if (technicalCommand) {
     const replyToken = event.replyToken || "";
-    const replyText = systemCommand.enabled
-      ? "เปิดระบบวิมลแล้วค่ะ ต่อจากนี้วิมลจะกลับมาตอบและจดจำบริบทในกลุ่มนี้นะคะ"
-      : "ปิดระบบวิมลแล้วค่ะ วิมลจะหยุดตอบและหยุดสกัดความจำใหม่ในกลุ่มนี้ จนกว่าจะพิมพ์ว่า “วิมล เปิดระบบ”";
+    const creator = isCreator(target.userId);
+    const replyText = creator
+      ? await executeTechnicalCommand(technicalCommand, target, defaultOpenAiModel)
+      : "คำสั่งนี้ใช้ได้เฉพาะผู้สร้างวิมลเท่านั้นค่ะ";
     const response = replyToken ? await replyToLine(channelAccessToken, replyToken, replyText) : null;
     const lineReplyError = response && !response.ok ? await safeResponseText(response) : "";
     await safeRecordAudit({
@@ -247,12 +248,15 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       trigger: "mention",
       route: "settings",
       agent: "SystemControlAgent",
-      status: systemCommand.enabled ? "bot_enabled" : "bot_disabled",
+      status: creator ? `technical_${technicalCommand.action}` : "technical_unauthorized",
       latencyMs: Date.now() - webhookStarted,
       errorCode: response && !response.ok ? `LINE_REPLY_${response.status}` : "",
       lineReplyStatus: response?.status || 0,
       lineReplyOk: Boolean(response?.ok),
       lineReplyError,
+      intent: "technical_command",
+      tasks: ["settings"],
+      decisionReason: creator ? `creator_command:${technicalCommand.action}` : "non_creator_technical_command",
     });
     return { ok: Boolean(response?.ok ?? true), status: response?.status, route: "settings", agent: "SystemControlAgent", replied: Boolean(response) };
   }
@@ -522,13 +526,85 @@ async function sentMessageIds(response: Response): Promise<string[]> {
   }
 }
 
-function parseSystemControlCommand(text: string): { enabled: boolean } | null {
+type TechnicalCommand =
+  | { action: "help" }
+  | { action: "status" }
+  | { action: "cost" }
+  | { action: "model"; model?: string }
+  | { action: "enable"; enabled: boolean };
+
+function isCreator(userId: string): boolean {
+  return hashId(userId) === creatorUserIdHash;
+}
+
+function parseTechnicalCommand(text: string): TechnicalCommand | null {
   const clean = String(text || "").trim().toLowerCase();
   const hasWakeWord = /(^|\s)(@?วิมล|ai)(\s|$)/i.test(clean);
   if (!hasWakeWord) return null;
-  if (/(เปิดระบบ|เปิด\s*ai|เปิด\s*วิมล|start|enable)/i.test(clean)) return { enabled: true };
-  if (/(ปิดระบบ|ปิด\s*ai|ปิด\s*วิมล|stop|disable)/i.test(clean)) return { enabled: false };
-  return null;
+  if (/(เปิดระบบ|เปิด\s*ai|เปิด\s*วิมล|start|enable)/i.test(clean)) return { action: "enable", enabled: true };
+  if (/(ปิดระบบ|ปิด\s*ai|ปิด\s*วิมล|stop|disable)/i.test(clean)) return { action: "enable", enabled: false };
+  if (!/(system|ซิสเต็ม|ระบบ|เทคนิค|admin)/i.test(clean)) return null;
+  if (/(help|คำสั่ง|ช่วย|คู่มือ)/i.test(clean)) return { action: "help" };
+  if (/(cost|usage|ค่าใช้|token|โทเคน)/i.test(clean)) return { action: "cost" };
+  const modelMatch = clean.match(/(?:model|โมเดล)\s+([a-z0-9._-]+)/i);
+  if (modelMatch) return { action: "model", model: modelMatch[1] };
+  if (/(model|โมเดล)/i.test(clean)) return { action: "model" };
+  if (/(status|สถานะ|info|ข้อมูล)/i.test(clean)) return { action: "status" };
+  return { action: "status" };
+}
+
+async function executeTechnicalCommand(command: TechnicalCommand, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, defaultModel: string): Promise<string> {
+  if (command.action === "enable") {
+    await setGroupBotEnabled(target, command.enabled);
+    return command.enabled
+      ? "เปิดระบบวิมลแล้วค่ะ ต่อจากนี้วิมลจะกลับมาตอบและจดจำบริบทในกลุ่มนี้นะคะ"
+      : "ปิดระบบวิมลแล้วค่ะ วิมลจะหยุดตอบและหยุดสกัดความจำใหม่ในกลุ่มนี้ จนกว่าผู้สร้างจะพิมพ์ว่า “วิมล เปิดระบบ”";
+  }
+  if (command.action === "model") {
+    if (!command.model) {
+      const config = await getAiRuntimeConfig(defaultModel, aiModelOptions);
+      return `โมเดลปัจจุบัน: ${config.modelLabel}\nเปลี่ยนได้ด้วย: วิมล System model gpt-5.4-mini หรือ gpt-4.1-mini`;
+    }
+    const config = await setAiRuntimeModel(command.model, aiModelOptions);
+    return `เปลี่ยนโมเดลวิมลเป็น ${config.modelLabel} แล้วค่ะ`;
+  }
+  if (command.action === "cost") {
+    const usage = await aiUsageSummary(5000);
+    return [
+      "รายงานค่าใช้จ่ายวิมล",
+      `Calls: ${formatInteger(Number(usage.openAiCalls || 0))}`,
+      `Tokens: ${formatInteger(Number(usage.totalTokens || 0))}`,
+      `Cost: $${Number(usage.estimatedUsd || 0).toFixed(6)} / ฿${Number(usage.estimatedThb || 0).toFixed(4)}`,
+    ].join("\n");
+  }
+  if (command.action === "help") {
+    return [
+      "คำสั่งเทคนิคของวิมลสำหรับผู้สร้าง",
+      "วิมล System status - ดูสถานะระบบ",
+      "วิมล System cost - ดูค่าใช้จ่าย/Token",
+      "วิมล System model - ดูโมเดลปัจจุบัน",
+      "วิมล System model gpt-5.4-mini - เปลี่ยนโมเดล",
+      "วิมล เปิดระบบ / วิมล ปิดระบบ - เปิดปิดการตอบในกลุ่ม",
+    ].join("\n");
+  }
+  const [botEnabled, config, usage] = await Promise.all([
+    getGroupBotEnabled(target),
+    getAiRuntimeConfig(defaultModel, aiModelOptions),
+    aiUsageSummary(1000),
+  ]);
+  return [
+    "System วิมล",
+    `ผู้สร้าง: Notzio PK (${creatorUserIdHash})`,
+    `สถานะกลุ่ม: ${botEnabled ? "เปิดระบบ" : "ปิดระบบ"}`,
+    `โมเดล: ${config.modelLabel}`,
+    `AI calls ล่าสุด: ${formatInteger(Number(usage.openAiCalls || 0))}`,
+    `Token ล่าสุด: ${formatInteger(Number(usage.totalTokens || 0))}`,
+    `ค่าใช้จ่ายล่าสุด: $${Number(usage.estimatedUsd || 0).toFixed(6)} / ฿${Number(usage.estimatedThb || 0).toFixed(4)}`,
+  ].join("\n");
+}
+
+function formatInteger(value: number): string {
+  return new Intl.NumberFormat("en-US").format(Math.round(Number(value || 0)));
 }
 
 function cheapAiGate(text: string): { shouldRun: boolean; reason: string } {
