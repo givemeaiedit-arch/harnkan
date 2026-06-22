@@ -79,6 +79,7 @@ export type MessageClassification = {
   confidence: number;
   personalityMode: PersonalityMode;
   replyIntent: ReplyIntent;
+  memories?: Array<Omit<MemberMemory, "id" | "createdAt">>;
   usage?: TokenUsage;
   cost?: CostEstimate;
 };
@@ -130,13 +131,6 @@ export type AiModelOption = {
   value: string;
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
-};
-
-export type SilentMemoryResult = {
-  status: "saved" | "scanned" | "skipped" | "skipped_sensitive" | "error";
-  savedMemoryCount: number;
-  usage: TokenUsage;
-  cost: CostEstimate;
 };
 
 export type ParsedSplitExpense = {

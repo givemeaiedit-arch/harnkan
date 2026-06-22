@@ -1,6 +1,6 @@
 import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
-import { aiModelOptions, classifyMessageForReply, parseCommand, rememberSilentlyFromMessage, runAgentWorkflow, runClassifierReply } from "./agents";
+import { aiModelOptions, classifyMessageForReply, parseCommand, runAgentWorkflow, runClassifierReply } from "./agents";
 import { chatTargetFromEvent, fetchLineProfile, hashId, replyToLine, verifyLineSignature } from "./line";
 import {
   ensureLineIdentity,
@@ -17,10 +17,11 @@ import {
   recentLineEvents,
   recordBotReplyMessages,
   recordAudit,
+  saveMemory,
   setGroupBotEnabled,
   setAiRuntimeModel,
 } from "./repository";
-import type { AuditEvent, CostEstimate, LineEvent, LineWebhookBody, TokenUsage } from "./types";
+import type { AuditEvent, CostEstimate, LineEvent, LineWebhookBody, MemberMemory, TokenUsage } from "./types";
 
 const lineChannelSecret = defineSecret("LINE_CHANNEL_SECRET");
 const lineChannelAccessToken = defineSecret("LINE_CHANNEL_ACCESS_TOKEN");
@@ -256,8 +257,27 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   const command = parseCommand(event.message.text || "", { invokedByReply });
 
   if (!command.invoked) {
-    const silentMemory = await rememberSilently(event.message.text || "", target, openaiKey);
+    const gate = cheapAiGate(event.message.text || "");
+    if (!gate.shouldRun) {
+      await safeRecordAudit({
+        chatId: target.chatId,
+        chatType: target.chatType,
+        userIdHash: hashId(target.userId),
+        eventType: "message",
+        messagePreview,
+        route: "general",
+        agent: "RuleGate",
+        status: "rule_gate_skipped",
+        latencyMs: Date.now() - started,
+        classifierReason: gate.reason,
+      });
+      return { ok: true, route: "general", agent: "RuleGate", replied: false };
+    }
+
     const classifierResult = await maybeRunClassifierReply(event.message.text || "", target, openaiKey);
+    const savedMemoryCount = classifierResult?.classification?.memories?.length
+      ? await saveClassificationMemories(target, classifierResult.classification.memories)
+      : 0;
     if (classifierResult?.agentResult) {
       const replyToken = event.replyToken || "";
       const response = replyToken ? await replyToLine(channelAccessToken, replyToken, classifierResult.agentResult.reply) : null;
@@ -281,7 +301,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
         outputTokens: usage.outputTokens,
         totalTokens: usage.totalTokens,
         openAiCalls: usage.openAiCalls,
-        savedMemoryCount: silentMemory.savedMemoryCount,
+        savedMemoryCount,
         estimatedUsd: cost.estimatedUsd,
         estimatedThb: cost.estimatedThb,
         lineReplyStatus: response?.status || 0,
@@ -312,7 +332,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
         outputTokens: usage.outputTokens,
         totalTokens: usage.totalTokens,
         openAiCalls: usage.openAiCalls,
-        savedMemoryCount: silentMemory.savedMemoryCount,
+        savedMemoryCount,
         estimatedUsd: cost.estimatedUsd,
         estimatedThb: cost.estimatedThb,
         classifierReason: classifierResult.classification.reason,
@@ -328,18 +348,11 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       userIdHash: hashId(target.userId),
       eventType: "message",
       messagePreview,
-      route: "memory",
-      agent: "SilentMemoryAgent",
-      status: silentMemoryStatus(silentMemory.status),
+      route: "general",
+      agent: "RuleGate",
+      status: "classifier_unavailable",
       latencyMs: Date.now() - started,
-      model: silentMemory.usage.model,
-      inputTokens: silentMemory.usage.inputTokens,
-      outputTokens: silentMemory.usage.outputTokens,
-      totalTokens: silentMemory.usage.totalTokens,
-      openAiCalls: silentMemory.usage.openAiCalls,
-      savedMemoryCount: silentMemory.savedMemoryCount,
-      estimatedUsd: silentMemory.cost.estimatedUsd,
-      estimatedThb: silentMemory.cost.estimatedThb,
+      classifierReason: gate.reason,
     });
     return { ok: true, replied: false };
   }
@@ -436,7 +449,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
 
 async function maybeRunClassifierReply(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
   try {
-    const context = await getGroupContext(target, { focusText: text, recentMessagesLimit: 30 });
+    const context = await getGroupContext(target, { focusText: text, recentMessagesLimit: 10 });
     const classification = await classifyMessageForReply({
       text,
       context,
@@ -473,14 +486,6 @@ async function sentMessageIds(response: Response): Promise<string[]> {
   }
 }
 
-function silentMemoryStatus(status: string): string {
-  if (status === "saved") return "silent_memory_saved";
-  if (status === "skipped_sensitive") return "silent_memory_skipped_sensitive";
-  if (status === "skipped") return "silent_memory_skipped";
-  if (status === "error") return "silent_memory_error";
-  return "silent_memory_scanned";
-}
-
 function parseSystemControlCommand(text: string): { enabled: boolean } | null {
   const clean = String(text || "").trim().toLowerCase();
   const hasWakeWord = /(^|\s)(@?วิมล|ai)(\s|$)/i.test(clean);
@@ -488,6 +493,40 @@ function parseSystemControlCommand(text: string): { enabled: boolean } | null {
   if (/(เปิดระบบ|เปิด\s*ai|เปิด\s*วิมล|start|enable)/i.test(clean)) return { enabled: true };
   if (/(ปิดระบบ|ปิด\s*ai|ปิด\s*วิมล|stop|disable)/i.test(clean)) return { enabled: false };
   return null;
+}
+
+function cheapAiGate(text: string): { shouldRun: boolean; reason: string } {
+  const clean = String(text || "").trim();
+  if (!clean) return { shouldRun: false, reason: "empty" };
+  if (looksSensitiveForGate(clean)) return { shouldRun: false, reason: "sensitive" };
+  const patterns = [
+    { reason: "memory_keyword", pattern: /(จำว่า|จำไว้|ชื่อ|เรียกว่า|เกิด|วันเกิด|ชอบ|ไม่ชอบ|ไม่กิน|แพ้|แฟน|ทำงาน|อยู่ที่|นิสัย|สไตล์|หาร|โอน|จ่าย|บาท|ไม่ต้องหาร|ออกค่า|รับผิดชอบ|มาแค่|มาช้า|กลับก่อน|ช่วงหลัง|ช่วงแรก)/i },
+    { reason: "help_or_question", pattern: /(ช่วย|สรุป|วิเคราะห์|คิดว่า|ทำไม|ยังไง|ดีไหม|ได้ไหม|ไหม|\?)/i },
+    { reason: "emotion_or_joke", pattern: /(555|ฮา|ขำ|เศร้า|เครียด|ดีใจ|โกรธ|งง|แปลก|สุด|มากกก|!!!)/i },
+  ];
+  const matched = patterns.find((item) => item.pattern.test(clean));
+  if (matched) return { shouldRun: true, reason: matched.reason };
+  if (looksLikeUsefulDeclaration(clean)) return { shouldRun: true, reason: "useful_declaration" };
+  if (clean.length >= 80) return { shouldRun: true, reason: "long_context" };
+  return { shouldRun: false, reason: "ordinary_chat_zero_token" };
+}
+
+function looksSensitiveForGate(text: string): boolean {
+  return /(รหัสผ่าน|password|api\s*key|token|secret|channel\s*secret|access\s*token|เลขบัตร|บัตรประชาชน|เลขบัญชี|account\s*number|sk-[A-Za-z0-9_-]+)/i.test(text);
+}
+
+function looksLikeUsefulDeclaration(text: string): boolean {
+  const clean = String(text || "").trim();
+  if (clean.length < 14) return false;
+  if (/^(โอเค|เค|ok|ครับ|ค่ะ|จ้า|อืม|อือ|ได้|ไม่|ใช่|เออ|555+|ฮ่า+|ขอบคุณ)$/i.test(clean)) return false;
+  return /(เป็น|อยู่|มี|เคย|กำลัง|จะ|ต้อง|ไป|มา|กิน|ทำ|เรียน|ชอบ|ไม่)/i.test(clean);
+}
+
+async function saveClassificationMemories(target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, memories: Array<Omit<MemberMemory, "id" | "createdAt">>): Promise<number> {
+  const strongMemories = memories.filter((memory) => memory.confidence >= 0.72).slice(0, 3);
+  if (!strongMemories.length) return 0;
+  await Promise.all(strongMemories.map((memory) => saveMemory(target, memory)));
+  return strongMemories.length;
 }
 
 function mergeUsage(first: TokenUsage | undefined, second: TokenUsage | undefined): TokenUsage {
@@ -528,32 +567,6 @@ async function safeRecordAudit(event: AuditEvent): Promise<void> {
     await recordAudit(event);
   } catch (error) {
     console.error("Record audit failed", { errorCode: errorName(error), chatIdHash: hashId(event.chatId) });
-  }
-}
-
-async function rememberSilently(text: string, target: NonNullable<ReturnType<typeof chatTargetFromEvent>>, openaiKey: string) {
-  try {
-    const context = await getGroupContext(target, { focusText: text, recentMessagesLimit: 12 });
-    const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
-    return await rememberSilentlyFromMessage({
-      text,
-      context,
-      target,
-      openaiApiKey: openaiKey,
-      model: aiConfig.model,
-    });
-  } catch (error) {
-    console.error("Silent memory failed", {
-      chatIdHash: hashId(target.chatId),
-      userIdHash: hashId(target.userId),
-      errorCode: errorName(error),
-    });
-    return {
-      status: "error" as const,
-      savedMemoryCount: 0,
-      usage: { model: defaultOpenAiModel, inputTokens: 0, outputTokens: 0, totalTokens: 0, openAiCalls: 0 },
-      cost: { model: defaultOpenAiModel, inputUsdPerMillion: 0, outputUsdPerMillion: 0, usdToThb: 0, estimatedUsd: 0, estimatedThb: 0 },
-    };
   }
 }
 

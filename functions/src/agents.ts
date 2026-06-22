@@ -10,7 +10,6 @@ import type {
   ParsedSplitExpense,
   PersonalityMode,
   ReplyIntent,
-  SilentMemoryResult,
   TokenUsage,
 } from "./types";
 import { createSplitExpense, deleteUserMemories, saveMemory } from "./repository";
@@ -52,6 +51,12 @@ type ClassificationOutput = {
   confidence: number;
   personalityMode: PersonalityMode;
   replyIntent: ReplyIntent;
+  memories: Array<{
+    subjectName: string;
+    category: MemberMemory["category"];
+    text: string;
+    confidence: number;
+  }>;
 };
 
 const wakeWords = ["@วิมล", "วิมล", "AI", "ai"];
@@ -119,7 +124,7 @@ export async function runAgentWorkflow(input: {
       result = await runGeneralChatAgent(command.text, context, openaiApiKey, model, tracker);
     }
 
-    if (!["memory", "memory_show", "memory_delete"].includes(command.route)) {
+    if (!["memory", "memory_show", "memory_delete"].includes(command.route) && shouldExtractAutoMemory(command.text)) {
       await saveAutoMemories(command.text, context, target, openaiApiKey, model, tracker);
     }
     const usage = usageFromTracker(tracker);
@@ -179,15 +184,30 @@ export async function classifyMessageForReply(input: {
         type: "string",
         enum: ["joke", "comfort", "opinion", "summary", "question", "none"],
       },
+      memories: {
+        type: "array",
+        maxItems: 3,
+        items: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            subjectName: { type: "string" },
+            category: { type: "string", enum: ["profile", "food", "birthday", "preference", "split", "note"] },
+            text: { type: "string" },
+            confidence: { type: "number" },
+          },
+          required: ["subjectName", "category", "text", "confidence"],
+        },
+      },
     },
-    required: ["shouldReply", "reason", "confidence", "personalityMode", "replyIntent"],
+    required: ["shouldReply", "reason", "confidence", "personalityMode", "replyIntent", "memories"],
   };
 
   const result = await createJsonCompletion<ClassificationOutput>(input.openaiApiKey, input.model, schema, [
     {
       role: "system",
       content:
-        "คุณคือ Message Classifier ของวิมลในกลุ่ม LINE หน้าที่คือเลือกว่าจะตอบหรือเงียบ ถ้าไม่ได้มีจังหวะจริงให้ shouldReply=false บอทไม่ควรตอบทุกข้อความ ให้ตอบเฉพาะเมื่อข้อความตลก มีอารมณ์ชัด ถามความเห็น พูดถึงเรื่องที่วิมลมี memory เกี่ยวข้อง มี inside joke หรือมีจังหวะแซวที่สุภาพได้ ห้ามตอบเมื่อเป็นเรื่องส่วนตัวอ่อนไหว ทะเลาะแรง ข้อมูลลับ หรือบทสนทนาทั่วไปที่ไม่ต้องมีบอท",
+        "คุณคือ Combined Gate ของวิมลในกลุ่ม LINE ทำ 2 งานในครั้งเดียว: 1) ตัดสินว่าจะตอบหรือเงียบ 2) สกัด memory สำคัญรายบุคคลถ้ามี ถ้าไม่ได้มีจังหวะจริงให้ shouldReply=false บอทไม่ควรตอบทุกข้อความ ให้ตอบเฉพาะเมื่อข้อความตลก มีอารมณ์ชัด ถามความเห็น พูดถึงเรื่องที่วิมลมี memory เกี่ยวข้อง มี inside joke หรือมีจังหวะแซวที่สุภาพได้ สำหรับ memories ให้เก็บเฉพาะข้อมูลที่ควรจำระยะยาว เช่น ชื่อเล่น อาหารที่ไม่กิน วันเกิด ความชอบ นิสัย เงื่อนไขหารเงิน โดยใส่ subjectName ให้ตรงเจ้าของข้อมูล ห้ามเก็บรหัสผ่าน token secret เลขบัตร เลขบัญชี หรือข้อมูลสุขภาพละเอียด",
     },
     {
       role: "user",
@@ -207,6 +227,7 @@ export async function classifyMessageForReply(input: {
     confidence,
     personalityMode: normalizePersonalityMode(result?.personalityMode),
     replyIntent: normalizeReplyIntent(result?.replyIntent),
+    memories: normalizeExtractedMemories(result?.memories, input.context),
     usage,
     cost: estimateCost(usage),
   };
@@ -427,37 +448,6 @@ async function saveAutoMemories(
   await Promise.all(strongMemories.slice(0, 3).map((memory) => saveMemory(target, memory)));
 }
 
-export async function rememberSilentlyFromMessage(input: {
-  text: string;
-  context: GroupContext;
-  target: ChatTarget;
-  openaiApiKey: string;
-  model: string;
-}): Promise<SilentMemoryResult> {
-  const tracker: CostTracker = { model: input.model, inputTokens: 0, outputTokens: 0, openAiCalls: 0 };
-  if (!input.text.trim()) {
-    const usage = usageFromTracker(tracker);
-    return { status: "skipped", savedMemoryCount: 0, usage, cost: estimateCost(usage) };
-  }
-  if (isSensitiveText(input.text)) {
-    const usage = usageFromTracker(tracker);
-    return { status: "skipped_sensitive", savedMemoryCount: 0, usage, cost: estimateCost(usage) };
-  }
-  const memories = await extractMemories(input.text, input.context, input.openaiApiKey, input.model, tracker);
-  const strongMemories = memories.filter((memory) => memory.confidence >= 0.82).slice(0, 2);
-  if (strongMemories.length) {
-    await Promise.all(strongMemories.map((memory) => saveMemory(input.target, memory)));
-  }
-  const usage = usageFromTracker(tracker);
-  return {
-    status: strongMemories.length ? "saved" : "scanned",
-    savedMemoryCount: strongMemories.length,
-    usage,
-    cost: estimateCost(usage),
-  };
-}
-
-
 async function extractMemories(
   text: string,
   context: GroupContext,
@@ -504,11 +494,12 @@ async function extractMemories(
   return (result?.memories || [])
     .filter((memory) => memory.text && !isSensitiveText(memory.text))
     .map((memory) => ({
-      ownerUserId: userIdForName(memory.subjectName, context) || context.currentUser.userId,
+      ownerUserId: userIdForExtractedSubject(memory.subjectName, context),
       category: memory.category,
       text: memory.text.slice(0, 240),
       confidence: clamp(Number(memory.confidence), 0, 1),
-    }));
+    }))
+    .filter((memory) => memory.ownerUserId);
 }
 
 async function parseSplitExpense(
@@ -660,6 +651,16 @@ function userIdForName(name: string, context: GroupContext): string {
   return context.members.find((member) => member.displayName.toLowerCase() === clean)?.userId || "";
 }
 
+function userIdForExtractedSubject(name: string, context: GroupContext): string {
+  const clean = String(name || "").trim();
+  if (!clean || /^(ฉัน|เรา|ผม|หนู|กู|me|myself)$/i.test(clean)) return context.currentUser.userId;
+  return userIdForName(clean, context);
+}
+
+function shouldExtractAutoMemory(text: string): boolean {
+  return /(จำว่า|จำไว้|ชื่อ|เรียกว่า|เกิด|วันเกิด|ชอบ|ไม่ชอบ|ไม่กิน|แพ้|แฟน|ทำงาน|อยู่ที่|นิสัย|สไตล์|ไม่ต้องหาร|ออกค่า|รับผิดชอบ|มาแค่|มาช้า|กลับก่อน|ช่วงหลัง|ช่วงแรก)/i.test(String(text || ""));
+}
+
 function memoryListSummary(memories: MemberMemory[]): string {
   const rows = memories.slice(0, 12).map((memory) => `- ${memory.text}`);
   return rows.join("\n") || "- ไม่มี";
@@ -712,6 +713,32 @@ function normalizePersonalityMode(value: unknown): PersonalityMode {
 function normalizeReplyIntent(value: unknown): ReplyIntent {
   const allowed: ReplyIntent[] = ["joke", "comfort", "opinion", "summary", "question", "none"];
   return allowed.includes(value as ReplyIntent) ? (value as ReplyIntent) : "none";
+}
+
+function normalizeExtractedMemories(
+  value: unknown,
+  context: GroupContext,
+): Array<Omit<MemberMemory, "id" | "createdAt">> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((memory) => memory && typeof memory === "object")
+    .map((memory) => {
+      const item = memory as { subjectName?: unknown; category?: unknown; text?: unknown; confidence?: unknown };
+      const text = String(item.text || "").trim();
+      return {
+        ownerUserId: userIdForExtractedSubject(String(item.subjectName || ""), context),
+        category: normalizeMemoryCategory(item.category),
+        text: text.slice(0, 240),
+        confidence: clamp(Number(item.confidence || 0), 0, 1),
+      };
+    })
+    .filter((memory) => memory.ownerUserId && memory.text && memory.confidence >= 0.72 && !isSensitiveText(memory.text))
+    .slice(0, 3);
+}
+
+function normalizeMemoryCategory(value: unknown): MemberMemory["category"] {
+  const allowed: MemberMemory["category"][] = ["profile", "food", "birthday", "preference", "split", "note"];
+  return allowed.includes(value as MemberMemory["category"]) ? (value as MemberMemory["category"]) : "note";
 }
 
 function personalityModeInstruction(mode: PersonalityMode): string {
