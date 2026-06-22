@@ -155,6 +155,8 @@ export type AuditEvent = {
   userIdHash: string;
   eventType: string;
   messagePreview?: string;
+  trigger?: ParsedCommand["trigger"];
+  contextMessageCount?: number;
   agent?: string;
   route?: string;
   status: string;

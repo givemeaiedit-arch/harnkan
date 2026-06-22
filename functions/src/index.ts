@@ -297,7 +297,8 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
   }
 
   try {
-    const context = await getGroupContext(target, { focusText: event.message.text || "", recentMessagesLimit: 12 });
+    const contextLimit = command.trigger === "reply" ? 20 : 12;
+    const context = await getGroupContext(target, { focusText: event.message.text || "", recentMessagesLimit: contextLimit });
     const aiConfig = await getAiRuntimeConfig(defaultOpenAiModel, aiModelOptions);
     const agentResult = await runAgentWorkflow({
       command,
@@ -315,6 +316,8 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
         userIdHash: hashId(target.userId),
         eventType: "message",
         messagePreview,
+        trigger: command.trigger,
+        contextMessageCount: context.recentMessages.length,
         route: agentResult.route,
         agent: agentResult.agent,
         status: "missing_reply_token",
@@ -332,6 +335,8 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       userIdHash: hashId(target.userId),
       eventType: "message",
       messagePreview,
+      trigger: command.trigger,
+      contextMessageCount: context.recentMessages.length,
       route: agentResult.route,
       agent: agentResult.agent,
       status: response.ok ? agentResult.status : "reply_failed",
@@ -364,6 +369,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
       userIdHash: hashId(target.userId),
       eventType: "message",
       messagePreview,
+      trigger: command.trigger,
       route: command.route,
       agent: "TriageAgent",
       status: "error",

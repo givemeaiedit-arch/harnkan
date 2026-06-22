@@ -666,7 +666,7 @@ function memoryListSummary(memories: MemberMemory[]): string {
 }
 
 function conversationContextSummary(context: GroupContext, fallbackRecentMessages: string[] = []): string {
-  const recentMessages = (context.recentMessages.length ? context.recentMessages : fallbackRecentMessages).slice(-10);
+  const recentMessages = (context.recentMessages.length ? context.recentMessages : fallbackRecentMessages).slice(-20);
   const relatedNames = context.relatedMembers.map((member) => member.displayName).join(", ") || "- ไม่มี";
   return [
     `ผู้พูดหลัก: ${context.currentUser.displayName}`,

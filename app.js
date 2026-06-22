@@ -2397,6 +2397,8 @@ function lineEventMarkup(entry) {
             <div class="line-event-meta">
               <small>Route: ${escapeHtml(lineRouteLabel(entry.route))}</small>
               <small>Agent: ${escapeHtml(entry.agent || "-")}</small>
+              <small>Trigger: ${escapeHtml(lineTriggerLabel(entry.trigger))}</small>
+              ${entry.contextMessageCount ? `<small>Context: ${formatInteger(entry.contextMessageCount)} ข้อความ</small>` : ""}
               <small>Latency: ${formatInteger(entry.latencyMs || 0)} ms</small>
               ${entry.savedMemoryCount ? `<small>Memory +${formatInteger(entry.savedMemoryCount)}</small>` : `<small>Memory ไม่เพิ่ม</small>`}
             </div>
@@ -2452,16 +2454,16 @@ function lineEventFlowSteps(entry) {
   const hasReply = Boolean(entry.lineReplyOk);
   const classifierRan = entry.agent === "MessageClassifier" || Boolean(entry.classifierReason) || status.startsWith("classifier_");
   const memorySaved = Number(entry.savedMemoryCount || 0) > 0;
+  const trigger = String(entry.trigger || "");
+  const contextCount = Number(entry.contextMessageCount || 0);
   return [
     { index: "1", title: "รับข้อความ", detail: entry.eventType === "message" ? "Webhook รับ message event แล้ว" : `รับ ${entry.eventType || "event"}`, tone: "ok" },
     { index: "2", title: "Memory", detail: memorySaved ? `บันทึก ${formatInteger(entry.savedMemoryCount)} รายการ` : "สแกนแล้ว ไม่เพิ่มข้อมูลใหม่", tone: memorySaved ? "ok" : "idle" },
     {
       index: "3",
-      title: "Classifier",
-      detail: classifierRan
-        ? (status === "classifier_no_reply" ? "ตรวจแล้วเลือกไม่ตอบ" : `เลือก ${entry.personalityMode || "mode"} • ${formatDecimal(entry.classifierConfidence || 0, 2)}`)
-        : (entry.lineReplyOk ? "ข้าม เพราะเป็นคำสั่งเรียกวิมลโดยตรง" : "ไม่เข้าเงื่อนไขให้ประเมิน"),
-      tone: classifierRan && status !== "classifier_no_reply" ? "ok" : "idle",
+      title: classifierRan ? "Classifier" : "Trigger",
+      detail: lineEventDecisionDetail({ classifierRan, status, trigger, contextCount, entry }),
+      tone: classifierRan && status !== "classifier_no_reply" ? "ok" : (trigger ? "ok" : "idle"),
     },
     {
       index: "4",
@@ -2472,6 +2474,17 @@ function lineEventFlowSteps(entry) {
       tone: hasReply ? "ok" : lineReplyStepTone(entry),
     },
   ];
+}
+
+function lineEventDecisionDetail({ classifierRan, status, trigger, contextCount, entry }) {
+  if (classifierRan) {
+    return status === "classifier_no_reply"
+      ? "ตรวจแล้วเลือกไม่ตอบ"
+      : `เลือก ${entry.personalityMode || "mode"} • ${formatDecimal(entry.classifierConfidence || 0, 2)}`;
+  }
+  if (trigger === "reply") return `เรียกด้วยการตอบกลับ • วิเคราะห์ย้อนหลัง ${formatInteger(contextCount || 20)} ข้อความ`;
+  if (trigger === "mention") return `เรียกชื่อวิมลโดยตรง • context ${formatInteger(contextCount || 12)} ข้อความ`;
+  return "ไม่เข้าเงื่อนไขให้ประเมิน";
 }
 
 function lineReplyStepDetail(entry) {
@@ -2499,6 +2512,15 @@ function lineRouteLabel(route) {
     speech: "วิเคราะห์คำพูด",
   };
   return labels[route] || route || "-";
+}
+
+function lineTriggerLabel(trigger) {
+  const labels = {
+    reply: "กดตอบกลับวิมล",
+    mention: "เรียกชื่อวิมล",
+    classifier: "Classifier เลือกตอบ",
+  };
+  return labels[trigger] || "-";
 }
 
 function lineEventErrorHint(entry) {
