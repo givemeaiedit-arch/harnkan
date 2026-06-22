@@ -294,7 +294,7 @@ async function runDynamicWimolAgent(
   const decision = inferDynamicDecision(text, context);
   let result: AgentResult;
   if (decision.primaryTask === "memory") {
-    result = await runMemoryAgent(text, context, target, openaiApiKey, model, tracker);
+    result = await runMemoryAgent(stripMemorySavePrefix(text), context, target, openaiApiKey, model, tracker);
   } else if (decision.primaryTask === "split") {
     result = await runSplitBillAgent(text, context, target, openaiApiKey, model, tracker);
   } else if (decision.primaryTask === "horoscope") {
@@ -336,7 +336,8 @@ function inferDynamicDecision(text: string, context: GroupContext): {
       confidence: 0.9,
     };
   }
-  if (/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)?\s*.+/i.test(clean) && shouldExtractAutoMemory(clean)) tasks.add("memory");
+  if (isExplicitMemorySave(clean)) tasks.add("memory");
+  if (isMemoryQuestion(clean)) tasks.add("chat");
   if (/(?:หาร|ค่าอาหาร|ค่าเบียร์|ค่าเหล้า|จ่าย|โอน|บาท|\d+\s*(?:บ\.|บาท))/i.test(clean)) tasks.add("split");
   if (/(?:ดูดวง|ดวง|ราศี|ไพ่|โชค)/i.test(clean)) tasks.add("horoscope");
   if (/(?:วิเคราะห์|ปรับคำพูด|โทน|สุภาพ|แรงไปไหม|ควรพูด)/i.test(clean)) tasks.add("speech");
@@ -375,7 +376,7 @@ async function runGeneralChatAgent(text: string, context: GroupContext, openaiAp
     {
       role: "system",
       content:
-        `${femalePersona} ตอบสั้น ชัดเจน ถ้างานเกี่ยวกับหารเงิน ดูดวง วิเคราะห์คำพูด หรือความจำ ให้ช่วยต่อจากข้อความธรรมชาติได้ ไม่ต้องบังคับใช้คำสั่ง slash ห้ามตอบเป็นเมนูแนะนำความสามารถซ้ำ ๆ ถ้าผู้ใช้เรียกชื่อเฉย ๆ ให้ตอบรับแบบเพื่อนในกลุ่ม`,
+        `${femalePersona} ตอบสั้น ชัดเจน ถ้าผู้ใช้ถามว่า “เราชื่ออะไร”, “จำได้ไหม”, “รู้ไหมเราเป็นใคร” ให้ตอบจาก memory/context เหมือนคุยปกติ ห้ามตอบว่า “จำให้แล้ว” เว้นแต่ผู้ใช้สั่งชัดว่า “จำว่า/จำไว้ว่า/บันทึกว่า” ถ้างานเกี่ยวกับหารเงิน ดูดวง วิเคราะห์คำพูด หรือความจำ ให้ช่วยต่อจากข้อความธรรมชาติได้ ไม่ต้องบังคับใช้คำสั่ง slash ห้ามตอบเป็นเมนูแนะนำความสามารถซ้ำ ๆ ถ้าผู้ใช้เรียกชื่อเฉย ๆ ให้ตอบรับแบบเพื่อนในกลุ่ม`,
     },
     {
       role: "user",
@@ -393,6 +394,18 @@ async function runGeneralChatAgent(text: string, context: GroupContext, openaiAp
 
 function isWakeOnlyText(text: string): boolean {
   return String(text || "").trim() === "__WAKE_ONLY__";
+}
+
+function isExplicitMemorySave(text: string): boolean {
+  return /^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s+/i.test(String(text || "").trim());
+}
+
+function stripMemorySavePrefix(text: string): string {
+  return String(text || "").trim().replace(/^(จำว่า|จำไว้ว่า|บันทึกว่า|remember)\s+/i, "").trim();
+}
+
+function isMemoryQuestion(text: string): boolean {
+  return /(จำได้ไหม|จำ.*(?:อะไร|ไหม|มั้ย)|เรา(?:ชื่อ|คือ).*อะไร|ฉัน(?:ชื่อ|คือ).*อะไร|รู้ไหม.*(?:เรา|ฉัน))/i.test(String(text || ""));
 }
 
 function wakeOnlyReply(context: GroupContext): string {
