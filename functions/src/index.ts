@@ -11,6 +11,7 @@ import {
   groupMemoriesForAdmin,
   isReplyToKnownBotMessage,
   lineDashboardAnalytics,
+  recordConversationMessage,
   recentPublicMemories,
   recentLineEvents,
   recordBotReplyMessages,
@@ -204,6 +205,7 @@ async function handleLineEvent(event: LineEvent, webhookStarted: number, channel
 
   const profile = await fetchLineProfile(channelAccessToken, target.source);
   await ensureLineIdentity(target, profile);
+  await recordConversationMessage(target, profile, event.message.text || "", event);
   const invokedByReply = await isReplyToKnownBotMessage(target, event);
   const command = parseCommand(event.message.text || "", { invokedByReply });
 

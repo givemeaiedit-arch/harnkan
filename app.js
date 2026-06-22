@@ -2055,6 +2055,7 @@ function renderLineSummaryMetrics(totals = {}, dateRange = {}) {
   if (!target) return;
   const items = [
     ["ข้อความรับรวมทั้งหมด", formatInteger(totals.receivedMessages || 0)],
+    ["ข้อความใน History", formatInteger(totals.conversationMessageCount || 0)],
     ["ข้อความตอบรวมทั้งหมด", formatInteger(totals.repliedMessages || 0)],
     ["ตอบจาก Classifier", formatInteger(totals.classifierReplies ?? totals.spontaneousReplies ?? 0)],
     ["เฉลี่ยรับต่อวัน", formatDecimal(totals.averageReceivedPerDay || 0, 1)],

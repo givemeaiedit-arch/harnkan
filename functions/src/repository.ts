@@ -55,6 +55,30 @@ export async function ensureLineIdentity(target: ChatTarget, profile: LineProfil
   ]);
 }
 
+export async function recordConversationMessage(target: ChatTarget, profile: LineProfile | null, text: string, event: LineEvent): Promise<void> {
+  const cleanText = maskSensitiveConversationText(text).trim();
+  if (!cleanText) return;
+  const displayName = safeDisplayName(profile?.displayName, target.userId);
+  const messageId = String(event.message?.id || "");
+  const docRef = messageId
+    ? db.collection("lineGroups").doc(target.chatId).collection("messages").doc(messageId)
+    : db.collection("lineGroups").doc(target.chatId).collection("messages").doc();
+  await docRef.set(
+    {
+      messageId,
+      userId: target.userId,
+      userIdHash: hashId(target.userId),
+      displayName,
+      text: cleanText.slice(0, 800),
+      chatType: target.chatType,
+      quotedMessageId: String(event.message?.quotedMessageId || ""),
+      receivedAt: event.timestamp ? Timestamp.fromMillis(Number(event.timestamp)) : FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
 export async function getGroupContext(
   target: ChatTarget,
   options: { focusText?: string; recentMessagesLimit?: number } = {},
@@ -197,6 +221,19 @@ export async function isReplyToKnownBotMessage(target: ChatTarget, event: LineEv
 }
 
 export async function recentGroupMessageContext(chatId: string, limit = 10): Promise<string[]> {
+  const messageSnap = await db.collection("lineGroups").doc(chatId).collection("messages").orderBy("receivedAt", "desc").limit(Math.max(limit * 2, limit)).get();
+  const messages = messageSnap.docs
+    .map((doc) => {
+      const displayName = String(doc.get("displayName") || "").trim();
+      const text = String(doc.get("text") || "").trim();
+      return text ? `${displayName || "สมาชิก"}: ${text}` : "";
+    })
+    .filter(Boolean)
+    .filter((message, index, all) => all.indexOf(message) === index)
+    .slice(0, limit)
+    .reverse();
+  if (messages.length) return messages;
+
   const snap = await db.collection("lineGroups").doc(chatId).collection("events").orderBy("receivedAt", "desc").limit(Math.max(limit * 2, limit)).get();
   return snap.docs
     .map((doc) => String(doc.get("messagePreview") || "").trim())
@@ -315,6 +352,7 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
   const totalTokens = primaryRows.reduce((sum, row) => sum + row.totalTokens, 0);
   const totalCalls = primaryRows.reduce((sum, row) => sum + row.openAiCalls, 0);
   const dayCount = Math.max(activeDays.length, 1);
+  const conversationMessageCount = primaryChatId ? await countConversationMessages(primaryChatId) : 0;
 
   return {
     primaryChatIdHash: primaryRows[0]?.chatIdHash || "",
@@ -332,6 +370,7 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
       averageReceivedPerDay: messageRows.length / dayCount,
       averageRepliesPerDay: repliedRows.length / dayCount,
       totalDays: activeDays.length,
+      conversationMessageCount,
     },
     today: {
       receivedMessages: todayRows.length,
@@ -489,6 +528,15 @@ async function memberNameMap(chatId: string): Promise<Map<string, string>> {
   return map;
 }
 
+async function countConversationMessages(chatId: string): Promise<number> {
+  try {
+    const snap = await db.collection("lineGroups").doc(chatId).collection("messages").count().get();
+    return snap.data().count || 0;
+  } catch {
+    return 0;
+  }
+}
+
 function bangkokDateKey(date: Date): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Bangkok",
@@ -592,4 +640,12 @@ function dedupeMemories(memories: MemberMemory[]): MemberMemory[] {
 
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function maskSensitiveConversationText(text: string): string {
+  return String(text || "")
+    .replace(/(sk-[A-Za-z0-9_-]+)/g, "[masked-api-key]")
+    .replace(/(รหัสผ่าน|password|api\s*key|token|secret|channel\s*secret|access\s*token)\s*[:=]?\s*\S+/gi, "$1 [masked]")
+    .replace(/\b\d{13}\b/g, "[masked-id-card]")
+    .replace(/\b\d{9,12}\b/g, "[masked-number]");
 }
