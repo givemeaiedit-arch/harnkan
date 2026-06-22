@@ -9,6 +9,8 @@ let remoteSaveEnabled = false;
 let saveTimer;
 let lineMemoryUiState = { view: "all", owner: "all", category: "all" };
 let lineMemoryPayloadCache = { items: [], categories: [], owners: [] };
+let lineCostMode = "hour";
+let lineAnalyticsCache = {};
 
 function canUseSharedStateApi() {
   return location.protocol.startsWith("http") && !location.hostname.endsWith("github.io");
@@ -2035,6 +2037,7 @@ function renderLineAiSummary(summary, analytics = {}) {
 }
 
 function renderLineDashboard(analytics = {}) {
+  lineAnalyticsCache = analytics || {};
   const totals = analytics.totals || {};
   const today = analytics.today || {};
   $("#lineTodayReceivedLabel").textContent = formatInteger(today.receivedMessages || 0);
@@ -2046,8 +2049,114 @@ function renderLineDashboard(analytics = {}) {
   $("#lineAverageCostPerDayLabel").textContent = formatUsd(totals.averageCostUsdPerDay || 0);
   $("#lineAverageCostPerDayThbLabel").textContent = formatThb(totals.averageCostThbPerDay || 0);
   renderLineHourlyChart(Array.isArray(analytics.hourlyToday) ? analytics.hourlyToday : []);
+  renderLineCostDashboard(analytics);
   renderLineSummaryMetrics(totals, analytics.dateRange || {});
   renderLineSpeakers(analytics.speakers || {});
+}
+
+function renderLineCostDashboard(analytics = {}) {
+  bindLineCostControls();
+  const totals = analytics.totals || {};
+  const rows = lineCostMode === "day" ? (analytics.dailyUsage || []) : (analytics.hourlyCostToday || []);
+  const modelBreakdown = Array.isArray(analytics.modelBreakdown) ? analytics.modelBreakdown : [];
+  const kpis = $("#lineCostKpis");
+  if (kpis) {
+    kpis.innerHTML = [
+      ["ค่าใช้จ่ายรวม", `${formatUsd(totals.totalCostUsd || 0)} / ${formatThb(totals.totalCostThb || 0)}`, `${formatInteger(totals.totalTokens || 0)} tokens`],
+      ["ข้อความที่ตอบ", `${formatInteger(totals.repliedMessages || 0)} ข้อความ`, `${formatInteger(totals.totalAiCalls || 0)} AI calls`],
+      ["Model ที่ใช้", `${formatInteger(modelBreakdown.length)} models`, modelBreakdown[0]?.model || "-"],
+    ].map(([label, value, hint], index) => `
+      <div class="line-cost-kpi line-cost-kpi--${index + 1}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+        <small>${escapeHtml(hint)}</small>
+      </div>
+    `).join("");
+  }
+  const title = $("#lineCostChartTitle");
+  const subtitle = $("#lineCostChartSubtitle");
+  if (title) title.textContent = lineCostMode === "day" ? "ค่าใช้จ่ายรายวัน" : "ค่าใช้จ่ายรายชั่วโมง";
+  if (subtitle) subtitle.textContent = lineCostMode === "day" ? "ย้อนหลังสูงสุด 31 วัน แยกตาม Model AI" : "วันนี้แยกรายชั่วโมงตาม Model AI";
+  renderLineCostChart(rows, modelBreakdown);
+  renderLineModelTable(modelBreakdown);
+}
+
+function bindLineCostControls() {
+  $$(".line-cost-toggle").forEach((button) => {
+    const mode = button.getAttribute("data-line-cost-mode") || "hour";
+    button.classList.toggle("is-active", mode === lineCostMode);
+    if (button.dataset.boundCostToggle) return;
+    button.dataset.boundCostToggle = "1";
+    button.addEventListener("click", () => {
+      lineCostMode = mode;
+      renderLineCostDashboard(lineAnalyticsCache);
+    });
+  });
+}
+
+function renderLineCostChart(rows = [], modelBreakdown = []) {
+  const chart = $("#lineCostChart");
+  const legend = $("#lineCostLegend");
+  if (!chart) return;
+  const models = modelBreakdown.map((item) => item.model).filter(Boolean).slice(0, 6);
+  const max = Math.max(...rows.map((row) => Number(row.estimatedUsd || 0)), 0.000001);
+  if (!rows.length) {
+    chart.innerHTML = emptyState("ยังไม่มีข้อมูลค่าใช้จ่าย");
+    if (legend) legend.innerHTML = "";
+    return;
+  }
+  chart.innerHTML = rows.map((row) => {
+    const total = Number(row.estimatedUsd || 0);
+    const height = Math.max((total / max) * 210, total ? 8 : 4);
+    const modelRows = Array.isArray(row.models) ? row.models : [];
+    const segments = modelRows.length ? modelRows : [{ model: "unknown", estimatedUsd: total }];
+    return `
+      <div class="line-cost-bar" title="${escapeHtml(`${row.label} • ${formatUsd(total)} • ${formatInteger(row.repliedMessages || 0)} replies`)}">
+        <div class="line-cost-bar-value">${escapeHtml(total ? formatUsd(total) : "$0")}</div>
+        <div class="line-cost-stack" style="height:${height}px">
+          ${segments.map((segment) => {
+            const percent = total ? Math.max((Number(segment.estimatedUsd || 0) / total) * 100, 4) : 100;
+            return `<span style="height:${percent}%; background:${escapeHtml(modelColor(segment.model))}"></span>`;
+          }).join("")}
+        </div>
+        <div class="line-cost-bar-label">${escapeHtml(String(row.label || "-"))}</div>
+      </div>
+    `;
+  }).join("");
+  if (legend) {
+    legend.innerHTML = (models.length ? models : ["unknown"]).map((model) => `
+      <span><i style="background:${escapeHtml(modelColor(model))}"></i>${escapeHtml(model)}</span>
+    `).join("");
+  }
+}
+
+function renderLineModelTable(rows = []) {
+  const target = $("#lineModelTable");
+  if (!target) return;
+  if (!rows.length) {
+    target.innerHTML = emptyState("ยังไม่มีข้อมูล Model AI");
+    return;
+  }
+  target.innerHTML = rows.slice(0, 8).map((row) => `
+    <div class="line-model-row">
+      <span class="line-model-dot" style="background:${escapeHtml(modelColor(row.model))}"></span>
+      <div>
+        <b>${escapeHtml(row.model || "unknown")}</b>
+        <small>${formatInteger(row.openAiCalls || 0)} calls • ${formatInteger(row.repliedMessages || 0)} replies</small>
+      </div>
+      <strong>${escapeHtml(formatUsd(row.estimatedUsd || 0))}</strong>
+      <small>${escapeHtml(formatThb(row.estimatedThb || 0))}</small>
+      <small>${formatInteger(row.totalTokens || 0)} tokens</small>
+    </div>
+  `).join("");
+}
+
+function modelColor(model) {
+  const palette = ["#2563eb", "#10b981", "#f97316", "#d946ef", "#0ea5e9", "#f59e0b", "#64748b"];
+  const text = String(model || "unknown");
+  let hash = 0;
+  for (let index = 0; index < text.length; index += 1) hash = (hash + text.charCodeAt(index) * (index + 1)) % palette.length;
+  return palette[hash];
 }
 
 function renderLineSummaryMetrics(totals = {}, dateRange = {}) {

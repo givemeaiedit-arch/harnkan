@@ -415,6 +415,31 @@
                     </div>
                   </div>
 
+                  <section class="line-cost-dashboard">
+                    <div class="line-cost-toolbar">
+                      <div>
+                        <h2>Cost & Usage</h2>
+                        <span>ค่าใช้จ่าย ข้อความที่ตอบ และ Model AI ที่ใช้</span>
+                      </div>
+                      <div class="line-cost-controls">
+                        <button class="line-cost-toggle is-active" type="button" data-line-cost-mode="hour">รายชั่วโมง</button>
+                        <button class="line-cost-toggle" type="button" data-line-cost-mode="day">รายวัน</button>
+                      </div>
+                    </div>
+                    <div class="line-cost-kpis" id="lineCostKpis"></div>
+                    <div class="line-cost-chart-card">
+                      <div class="line-card-head">
+                        <div>
+                          <b id="lineCostChartTitle">ค่าใช้จ่ายรายชั่วโมง</b>
+                          <span id="lineCostChartSubtitle">แยกสีตาม Model AI ที่ใช้</span>
+                        </div>
+                      </div>
+                      <div class="line-cost-chart" id="lineCostChart"></div>
+                      <div class="line-cost-legend" id="lineCostLegend"></div>
+                    </div>
+                    <div class="line-model-table" id="lineModelTable"></div>
+                  </section>
+
                   <div class="line-dashboard-grid">
                     <section class="line-analytics-card">
                       <div class="line-card-head">

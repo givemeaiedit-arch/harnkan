@@ -365,6 +365,9 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
       eventType: String(data.eventType || ""),
       status: String(data.status || ""),
       lineReplyOk: Boolean(data.lineReplyOk),
+      model: String(data.model || "unknown"),
+      inputTokens: Number(data.inputTokens || 0),
+      outputTokens: Number(data.outputTokens || 0),
       estimatedUsd: Number(data.estimatedUsd || 0),
       estimatedThb: Number(data.estimatedThb || 0),
       openAiCalls: Number(data.openAiCalls || 0),
@@ -385,6 +388,9 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
   const todayReplies = repliedRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
   const todayClassifier = classifierRows.filter((row) => bangkokDateKey(row.receivedAt as Date) === todayKey);
   const hourlyToday = buildHourlyBuckets(todayRows, todayReplies, todayClassifier);
+  const hourlyCostToday = buildUsageBuckets(todayRows, "hour");
+  const dailyUsage = buildUsageBuckets(messageRows, "day");
+  const modelBreakdown = buildModelBreakdown(primaryRows);
   const speakerStats = buildSpeakerStats(messageRows, memberNames);
   const totalCostUsd = primaryRows.reduce((sum, row) => sum + row.estimatedUsd, 0);
   const totalCostThb = primaryRows.reduce((sum, row) => sum + row.estimatedThb, 0);
@@ -424,6 +430,9 @@ export async function lineDashboardAnalytics(limit = 5000): Promise<Record<strin
       lastReceivedAt: todayRows[todayRows.length - 1]?.receivedAt?.toISOString?.() || "",
     },
     hourlyToday,
+    hourlyCostToday,
+    dailyUsage,
+    modelBreakdown,
     speakers: {
       top: speakerStats.slice(0, 8),
       bottom: [...speakerStats].reverse().slice(0, 6).reverse(),
@@ -658,6 +667,82 @@ function buildHourlyBuckets(
     buckets[bangkokHour(row.receivedAt as Date)].spontaneous += 1;
   });
   return buckets;
+}
+
+function buildUsageBuckets(
+  rows: Array<{
+    receivedAt: Date | null;
+    model: string;
+    estimatedUsd: number;
+    estimatedThb: number;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    openAiCalls: number;
+    lineReplyOk: boolean;
+  }>,
+  mode: "hour" | "day",
+): Array<Record<string, unknown>> {
+  const map = new Map<string, { key: string; label: string; estimatedUsd: number; estimatedThb: number; totalTokens: number; inputTokens: number; outputTokens: number; openAiCalls: number; repliedMessages: number; models: Map<string, Record<string, number | string>> }>();
+  const orderedRows = [...rows].sort((left, right) => (left.receivedAt?.getTime?.() || 0) - (right.receivedAt?.getTime?.() || 0));
+  orderedRows.forEach((row) => {
+    const date = row.receivedAt as Date;
+    const key = mode === "hour" ? `${bangkokDateKey(date)} ${String(bangkokHour(date)).padStart(2, "0")}:00` : bangkokDateKey(date);
+    const label = mode === "hour" ? `${String(bangkokHour(date)).padStart(2, "0")}:00` : key.slice(5);
+    const bucket = map.get(key) || {
+      key,
+      label,
+      estimatedUsd: 0,
+      estimatedThb: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      openAiCalls: 0,
+      repliedMessages: 0,
+      models: new Map<string, Record<string, number | string>>(),
+    };
+    const model = row.model || "unknown";
+    const modelRow = bucket.models.get(model) || { model, estimatedUsd: 0, estimatedThb: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, openAiCalls: 0, repliedMessages: 0 };
+    bucket.estimatedUsd += row.estimatedUsd;
+    bucket.estimatedThb += row.estimatedThb;
+    bucket.totalTokens += row.totalTokens;
+    bucket.inputTokens += row.inputTokens;
+    bucket.outputTokens += row.outputTokens;
+    bucket.openAiCalls += row.openAiCalls;
+    bucket.repliedMessages += row.lineReplyOk ? 1 : 0;
+    modelRow.estimatedUsd = Number(modelRow.estimatedUsd) + row.estimatedUsd;
+    modelRow.estimatedThb = Number(modelRow.estimatedThb) + row.estimatedThb;
+    modelRow.totalTokens = Number(modelRow.totalTokens) + row.totalTokens;
+    modelRow.inputTokens = Number(modelRow.inputTokens) + row.inputTokens;
+    modelRow.outputTokens = Number(modelRow.outputTokens) + row.outputTokens;
+    modelRow.openAiCalls = Number(modelRow.openAiCalls) + row.openAiCalls;
+    modelRow.repliedMessages = Number(modelRow.repliedMessages) + (row.lineReplyOk ? 1 : 0);
+    bucket.models.set(model, modelRow);
+    map.set(key, bucket);
+  });
+  return [...map.values()].slice(mode === "day" ? -31 : -24).map((bucket) => ({
+    ...bucket,
+    models: [...bucket.models.values()].sort((left, right) => Number(right.estimatedUsd) - Number(left.estimatedUsd)),
+  }));
+}
+
+function buildModelBreakdown(
+  rows: Array<{ model: string; estimatedUsd: number; estimatedThb: number; totalTokens: number; inputTokens: number; outputTokens: number; openAiCalls: number; lineReplyOk: boolean }>,
+): Array<Record<string, number | string>> {
+  const map = new Map<string, Record<string, number | string>>();
+  rows.forEach((row) => {
+    const model = row.model || "unknown";
+    const current = map.get(model) || { model, estimatedUsd: 0, estimatedThb: 0, totalTokens: 0, inputTokens: 0, outputTokens: 0, openAiCalls: 0, repliedMessages: 0 };
+    current.estimatedUsd = Number(current.estimatedUsd) + row.estimatedUsd;
+    current.estimatedThb = Number(current.estimatedThb) + row.estimatedThb;
+    current.totalTokens = Number(current.totalTokens) + row.totalTokens;
+    current.inputTokens = Number(current.inputTokens) + row.inputTokens;
+    current.outputTokens = Number(current.outputTokens) + row.outputTokens;
+    current.openAiCalls = Number(current.openAiCalls) + row.openAiCalls;
+    current.repliedMessages = Number(current.repliedMessages) + (row.lineReplyOk ? 1 : 0);
+    map.set(model, current);
+  });
+  return [...map.values()].sort((left, right) => Number(right.estimatedUsd) - Number(left.estimatedUsd));
 }
 
 function buildSpeakerStats(
